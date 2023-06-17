@@ -1,0 +1,270 @@
+---
+title: "S05Var02"
+author: "Daniel Craig"
+date: "2023-06-15"
+output: html_document
+---
+#To do list:
+1. Compare auto.arima with log version of the data
+2. Compare auto.arima with means instead of removed NAs
+3. Try a (2,0,0) model
+4. Try a seasonal model?
+5. tsCV - Cross Validate
+6. test/train
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(forecast)
+library(tidyverse)
+library(readr)
+library(e1071)
+library(urca) #for ur.kpss()
+
+
+#data <- read_csv("C:\\Users\\dcrai\\source\\repos\\DATA624\\Project 1\\Data Set for Class.csv")
+
+seasonData <- read_csv("C:\\Users\\dcrai\\source\\repos\\DATA624\\Project 1\\seasonData Set for Class.csv")
+
+dataS05v2 <- data %>% filter(category == 'S05') %>% select(SeriesInd, category,Var02)
+
+```
+Check for NAs and Skewness. There was a significant ratio between the highest and lowest values at 28.4 and BoxCox recommends a transformation with a Lambda of -.4. Transformation was performed.
+```{r}
+
+#NA
+isNA <- which(is.na(dataS05v2$Var02))
+
+dataS05v2[790:800,]
+diff <- (dataS05v2[794,"Var02"] - dataS05v2[796,"Var02"])/2
+dataS05v2[795,"Var02"] <- (dataS05v2[794,"Var02"] - diff)
+
+dataS05v2[790:800,]
+#dataS05v2[794,"Var02"]: 14552000
+#dataS05v2[795,"Var02"]: 12773000     <- imputed val
+#dataS05v2[796,"Var02"]: 10994000
+
+#Removing Prediction Blanks
+dataS05v2 <- dataS05v2[-c(1623:1762),]
+
+#Skewness
+skewness(dataS05v2$Var02)
+max(dataS05v2$Var02)/min(dataS05v2$Var02) # Shows atleast outliers
+transResult <- BoxCoxTrans(dataS05v2$Var02) #Confirms a type of transformation via BoxCox is due
+lambda <- transResult$lambda
+
+transData <- BoxCox(dataS05v2$Var02, lambda)
+
+dataS05v2$Var02 <- transData
+```
+Creating Time Series and plotting. A downward trend with sharp spikes both positive and negative.
+```{r Create Time Series}
+tsS05v2 <- ts(dataS05v2[,c('Var02')], 
+            frequency = 1, 
+            start= dataS05v2$SeriesInd[1]
+            )
+
+autoplot(tsS05v2) + ylab("Var02") +xlab("SeriesIndex")
+
+
+```
+One difference was needed.
+```{r Differences}
+ndiffs(tsS05v2)
+
+tsS05v2 %>% diff() %>%
+  ggtsdisplay(xlab="Index",
+    main="Var01")
+```
+
+Seasonal Check showed no seasonal differences needed. Checked 5, 20, 60, 240
+```{r Seasonal Check}
+tsS05v2 <- ts(dataS05v2[,c('Var02')], 
+            frequency = 240, 
+            start= dataS05v2$SeriesInd[1]
+            )
+
+
+nsdiffs(tsS05v2)
+```
+
+
+```{r Train/Test Split}
+# 1622 observations, 70/30 split, 1135 is the 70th percentile obs
+valsToPredict70 <- 1622 - round(1622*.7)
+valsToPredict80 <- 1622 - round(1622*.8)
+
+#40669 was start id in the time series
+endValTS70 <- 40669 + round(1622*.7)
+endValTS80 <- 40669 + round(1622*.8)
+
+#Checking indexes again
+# length(dataS01$SeriesInd)
+# dataS01[1135,1]
+# dataS01[1622,1]
+
+
+#Create splits
+train70 <- window(tsS05v2, end = endValTS70)
+train80 <- window(tsS05v2, end = endValTS80)
+```
+
+ACF had two significant spikes at lags 1 and 2. PACF was descending significant spikes for the first 5 lags. Potentially a (1,1,3).
+```{r train ACF Plots}
+train70 %>% diff() %>%
+  ggtsdisplay(xlab="Index",
+    main="Var01")
+
+train70 %>% ur.kpss() %>% summary()
+ndiffs(train70)
+
+
+#80 Split
+train80 %>% diff() %>%
+  ggtsdisplay(xlab="Index",
+    main="Var01")
+
+train80 %>% ur.kpss() %>% summary()
+ndiffs(train80)
+```
+
+
+```{r nonSeasonal ARIMA All}
+
+testNonSeasonalArima <- function(data) {
+  #Instantiate a list
+  models <- list()
+
+  # Iterate through each of the potential values for p,d,q
+  for (p in 0:3) {
+    for (d in 0:1) {
+      for (q in 0:3) {
+        # Skip the (0,0,0) model as it is equivalent to the mean
+        if (p == 0 && d == 0 && q == 0) {
+          next
+        }
+        
+        # Fit the ARIMA models
+        model <- tryCatch({
+          arimaModel <- Arima(data, order = c(p, d, q), include.mean = TRUE)
+          modelName <- paste0("ARIMA(", p, ",", d, ",", q, ")")
+          models[[modelName]] <- arimaModel
+        }, error = function(e) {
+          NULL
+        })
+      }
+    }
+  }
+
+  # Return the list of models
+  return(models)
+}
+
+
+testNonSeasonalArima(train70)
+# train70
+# ARIMA012 -15061.31
+# ARIMA102 -15072.99
+# ARIMA103 -15077.68
+# ARIMA113 -15077.45
+# ARIMA112 -15076.26
+# ARIMA201 -15081.68
+# ARIMA202 -15084.99
+# ARIMA203 -15085.5
+# ARIMA212 -15077.38
+# ARIMA301 -15082.95
+
+testNonSeasonalArima(train80)
+# ARIMA302 -17225.76
+# ARIMA203 -17226.1
+# ARIMA202 -17226.05
+
+# ARIMA211 -17212.18
+# ARIMA212 -17216.06
+# ARIMA311 -17214.17
+# ARIMA312 -17214.2
+# ARIMA213 -17213.95
+# ARIMA113 -17216.17
+# ARIMA112 -17215.83
+
+
+```
+The auto arima also chose 113 on both 70 and 80 percent splits. Although both have about 3 significnat spikes on the ACF plot after lag 20, and neither pass the Ljung-Box Test
+```{r}
+(trainAuto70 <- auto.arima(train70, stepwise=FALSE, approximation = FALSE))
+#15077.45  ARIMA113
+
+(trainAuto80 <- auto.arima(train80, stepwise=FALSE, approximation = FALSE))
+#17216.12 ARIMA113
+
+trainAuto70 %>% forecast() %>% autoplot()
+
+trainAuto80 %>% forecast() %>% autoplot()
+
+checkresiduals(trainAuto70, lag = 50)
+checkresiduals(trainAuto80, lag =50)
+```
+Both MAPE's turned out pretty well with .015 on the 113 80% trained and the .023 for 70% split.
+```{r Accuracy Check}
+(accTrain70 <- trainAuto70 %>% forecast(h = val70Pred) %>%
+  forecast::accuracy(tsS05v2))
+#MAPE of 2.312 on testing, we want something close to 0. Can go up to 100
+
+(accTrain80 <- trainAuto80 %>% forecast(h = val80Pred) %>%
+  forecast::accuracy(tsS05v2))
+```
+
+But the ETS(A,N,N) model seems to out-perform on the testing data with .027 and .015, thus predictions will be made with that model.
+```{r ETS}
+etsModel70 <- ets(train70)
+etsModel80 <- ets(train80)
+
+ets70 <- etsModel70 %>% forecast(h = val70Pred ) %>%
+  accuracy(tsS05v2)
+ets70[,c("RMSE","MAE","MAPE","MASE")]
+
+#                     RMSE          MAE        MAPE     MASE
+# Training set 0.0003222803 0.0002427912 0.009724621 0.869495
+# Test set     0.0008257959 0.0006967926 0.027908800 2.495385
+
+ets80 <- etsModel80 %>% forecast(h = val80Pred ) %>%
+  accuracy(tsS05v2)
+ets80[,c("RMSE","MAE","MAPE","MASE")]
+#                      RMSE          MAE        MAPE      MASE
+# Training set 0.0003269669 0.0002463840 0.009868696 0.8874921
+# Test set     0.0004770633 0.0003828088 0.015334500 1.3789034
+```
+
+# Naive & Average
+Both the naive and average methodologies performed pretty well on this data with MAPEs at .018
+```{r}
+# Fit the Naive model
+naiveModel70 <- naive(train70, h = 140)
+naiveModel80 <- naive(train80, h = 140)
+
+# Make predictions for the next 140 observations
+forecast(naiveModel70, h = 140) %>% forecast::accuracy(tsS05v2)
+forecast(naiveModel80, h = 140) %>% forecast::accuracy(tsS05v2)
+
+forecast(mean(train70), h = 1622) %>% forecast::accuracy(tsS05v2)
+forecast(mean(train80), h = 1622) %>% forecast::accuracy(tsS05v2)
+
+```
+
+
+```{r Full Model ACF Plots}
+tsS05v2 %>% diff() %>%
+  ggtsdisplay(xlab="Index",
+    main="Var02")
+```
+
+```{r 211 ARIMA Final Preds}
+etsANN <- ets(tsS05v2)
+
+etsANNPreds <- etsANN %>% forecast(h = 140)
+
+#Note we need to inverse our box cox trans 
+write_csv(data.frame(InvBoxCox(etsANNPreds$mean, lambda)), "C:\\Users\\dcrai\\source\\repos\\DATA624\\Project 1\\S05Var02Final etsANN Forecast.csv")
+
+```
+

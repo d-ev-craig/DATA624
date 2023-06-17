@@ -1,0 +1,336 @@
+---
+title: "S02Var02"
+author: "Daniel Craig"
+date: "2023-06-15"
+output: html_document
+---
+#To do list:
+1. Compare auto.arima with log version of the data
+2. Compare auto.arima with means instead of removed NAs
+3. Try a (2,0,0) model
+4. Try a seasonal model?
+5. tsCV - Cross Validate
+6. test/train
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(forecast) #accuracy
+library(tidyverse)
+library(readr)
+library(e1071) #skewness
+library(urca) #for ur.kpss()
+
+#data <- read_csv("C:\\Users\\dcrai\\source\\repos\\DATA624\\Project 1\\Data Set for Class.csv", col_types = cols(SeriesInd = col_date(format = "%m/%d/%y")))
+
+data <- read_csv("C:\\Users\\dcrai\\source\\repos\\DATA624\\Project 1\\Data Set for Class.csv")
+
+dataS01 <- data %>% filter(category == 'S01') %>% select(SeriesInd, category, Var02)
+```
+No NA's were present amongst the dataset, only the predictions (1623 - 1762) were NA.
+```{r Removing NAs}
+#NA
+which(is.na(dataS01$Var02))
+
+#Removing the 140 empty values
+dataS01 <- dataS01[-c(1623:1762),]
+
+```
+
+Below is code chunk for checking skewness. Both with skewness() and the ratio between maximum and minimum of the variable. Benchmark is if the ratio is equal to 20 or high. With such low skewness, no transformation was chosen to retain interpretability of the data.
+```{r Skewness}
+#Skewness
+skewness(dataS01$Var02)
+max(dataS01$Var02)/min(dataS01$Var02) #Checked using the benchmark of ratio of max to min >= 20
+#BoxCoxTrans(dataS01$Var02) #Checking what BoxCox would do, its a log
+```
+There were two significant outliers, due to those it seemed a log transformation was enough to deal with them.
+```{r Full Data TimeSeries}
+tsS01v2 <- ts(dataS01$Var02,
+              start = min(dataS01$SeriesInd),
+              frequency =1)
+
+#length(tsS01v2) check for 1622
+
+ltsS01v2 <- log(tsS01v2)
+
+
+autoplot(ltsS01v2) + ylab("Var01") +xlab("SeriesIndex")
+```
+
+
+I tested for seasonality both by reformatting the SeriesInd index as date, as well as testing weekly data since the indexes skipped weekends. Also tested other numbers like 7, 4, 12, 24, etc.
+```{r Seasonality Checking}
+season5TS <- ts(dataS01$Var01,
+              start = min(dataS01$SeriesInd),
+              frequency =5) #Weekly
+
+season20TS <- ts(dataS01$Var01,
+              start = min(dataS01$SeriesInd),
+              frequency =20) #Monthly
+
+season60TS <- ts(dataS01$Var01,
+              start = min(dataS01$SeriesInd),
+              frequency =60) #Quarterly
+
+season240TS <- ts(dataS01$Var01,
+              start = min(dataS01$SeriesInd),
+              frequency =240) #Yearly
+
+nsdiffs(season5TS)
+nsdiffs(season20TS)
+nsdiffs(season60TS)
+nsdiffs(season240TS)
+
+```
+
+
+```{r Train/Test Split}
+
+# 1622 observations, 70/30 split, 1135 is the 70th percentile obs
+valsToPredict70 <- 1622 - round(1622*.7)
+valsToPredict80 <- 1622 - round(1622*.8)
+
+#40669 was start id in the time series
+endValTS70 <- 40669 + round(1622*.7)
+endValTS80 <- 40669 + round(1622*.8)
+
+#Checking indexes again
+# length(dataS01$SeriesInd)
+# dataS01[1135,1]
+# dataS01[1622,1]
+
+
+#Create splits
+train70 <- window(ltsS01v2, end = endValTS70)
+train80 <- window(ltsS01v2, end = endValTS80)
+```
+On the training data, something akin to a (1,1,3) model is what I'm expecting. ACF has 1 significant spike at lag 1, PACF has the first 4. Could also be a (0,0,3)
+```{r train ACF Plots}
+train70 %>% diff() %>%
+  ggtsdisplay(xlab="Index",
+    main="Var01")
+
+train70 %>% ur.kpss() %>% summary()
+ndiffs(train)
+
+
+#80 Split
+train80 %>% diff() %>%
+  ggtsdisplay(xlab="Index",
+    main="Var01")
+
+train80 %>% ur.kpss() %>% summary()
+ndiffs(train)
+
+
+```
+```{r nonSeasonal ARIMA All}
+
+testNonSeasonalArima <- function(data) {
+  #Instantiate a list
+  models <- list()
+
+  # Iterate through each of the potential values for p,d,q
+  for (p in 0:3) {
+    for (d in 0:1) {
+      for (q in 0:3) {
+        # Skip the (0,0,0) model as it is equivalent to the mean
+        if (p == 0 && d == 0 && q == 0) {
+          next
+        }
+        
+        # Fit the ARIMA models
+        model <- tryCatch({
+          arimaModel <- Arima(data, order = c(p, d, q), include.mean = TRUE)
+          modelName <- paste0("ARIMA(", p, ",", d, ",", q, ")")
+          models[[modelName]] <- arimaModel
+        }, error = function(e) {
+          NULL
+        })
+      }
+    }
+  }
+
+  # Return the list of models
+  return(models)
+}
+
+
+testNonSeasonalArima(train70)
+# train70
+# ARIMA112 542.31 
+# ARIMA113 541.69
+# ARIMA212 539.93
+# ARIMA313 541.11
+
+testNonSeasonalArima(train80)
+# ARIMA312   652.06
+# ARIMA212   650.31
+# ARIMA113   651.59
+
+```
+
+Auto ARIMA recommends ARIMA212 for both training splits. Some others to try are 313, 113, 212. No models pass the Ljung-Box test and most have two spikes in the ACF
+```{r Train AutoArima}
+(trainAuto70 <- auto.arima(train70, stepwise=FALSE, approximation = FALSE))
+#539.98  ARIMA2,1,2
+
+(trainAuto80 <- auto.arima(train80, stepwise=FALSE, approximation = FALSE))
+#650.31 ARIMA212
+
+trainAuto70 %>% forecast() %>% autoplot()
+
+trainAuto80 %>% forecast() %>% autoplot()
+
+checkresiduals(trainAuto70, lag = 50)
+checkresiduals(trainAuto80, lag =50)
+
+
+
+(train70Arima113 <- Arima(train70, order = c(1,1,3)))
+checkresiduals(train70Arima113, lag = 50)
+(train70Arima212 <- Arima(train70, order = c(2,1,2)))
+checkresiduals(train70Arima212, lag = 50)
+(train70Arima313 <- Arima(train70, order = c(3,1,3)))
+checkresiduals(train70Arima313, lag = 50)
+
+(train80Arima113 <- Arima(train80, order = c(1,1,3)))
+checkresiduals(train80Arima113, lag = 50)
+(train80Arima212 <- Arima(train80, order = c(2,1,2)))
+checkresiduals(train80Arima212, lag = 50)
+(train80Arima313 <- Arima(train80, order = c(3,1,3)))
+checkresiduals(train80Arima313, lag = 50)
+```
+Ultimately, the ARIMA313 model performed best on the testing partition with a MAPE of 2.148711 as opposed to the auto arima's 2.148718, important to note the AIC is lower on the auto arima's (2,1,2) by 4 points with barely any MAPE lost. We will stick with the ARIMA313.
+```{r Accuracy Check}
+
+(accTrain70 <- trainAuto70 %>% forecast(h = val70Pred) %>%
+  forecast::accuracy(ltsS01v2))
+#MAPE of 2.312 on testing, we want something close to 0. Can go up to 100
+
+(accTrain80 <- trainAuto80 %>% forecast(h = val80Pred) %>%
+  forecast::accuracy(ltsS01v2))
+
+#MAPE of 2.148718, which is a bit better.
+
+
+
+#Out of the below models, the Arima212 performed best at 2.314 on the test set
+(accTrain70Arima113 <- train70Arima113 %>% forecast(h = val70Pred) %>%
+  forecast::accuracy(ltsS01v2))
+#                       ME      RMSE       MAE        MPE     MAPE      MASE         ACF1 Theil's U
+# Training set -0.01209131 0.3055098 0.2297797 -0.1114652 1.437683 0.8566871 0.0008501981        NA
+# Test set      0.24697615 0.4958898 0.3742894  1.5135851 2.368022 1.3954627 0.5993549374  1.267835
+(accTrain70Arima212 <- train70Arima212 %>% forecast(h = val70Pred) %>%
+  forecast::accuracy(ltsS01v2))
+#                      ME      RMSE       MAE        MPE     MAPE      MASE        ACF1 Theil's U
+# Training set -0.0128799 0.3052698 0.2294326 -0.1164038 1.435633 0.8553932 -0.00267999        NA
+# Test set      0.2228229 0.4844972 0.3654790  1.3581319 2.314198 1.3626146  0.59977516  1.239464
+(accTrain70Arima313 <- train70Arima313 %>% forecast(h = val70Pred) %>%
+  forecast::accuracy(ltsS01v2))
+#                        ME      RMSE       MAE         MPE     MAPE      MASE        ACF1 Theil's U
+# Training set -0.008698516 0.3048972 0.2304058 -0.08953083 1.441454 0.8590215 -0.01326014        NA
+# Test set      0.356574412 0.5585416 0.4302348  2.21886897 2.716755 1.6040437  0.60069635  1.426442
+
+
+
+#Best here was ARIMA313 at 2.148
+(accTrain80Arima113 <- train80Arima113 %>% forecast(h = val70Pred) %>%
+  forecast::accuracy(ltsS01v2))
+#                       ME      RMSE       MAE        MPE     MAPE      MASE          ACF1 Theil's U
+# Training set -0.01216838 0.3095017 0.2339230 -0.1129628 1.469275 0.8605343 -4.233254e-05        NA
+# Test set      0.06720288 0.4327077 0.3372375  0.3575147 2.149999 1.2405983  5.842139e-01  1.099804
+
+(accTrain80Arima212 <- train80Arima212 %>% forecast(h = val70Pred) %>%
+  forecast::accuracy(ltsS01v2))
+#                       ME      RMSE       MAE        MPE     MAPE      MASE         ACF1 Theil's U
+# Training set -0.01258134 0.3093495 0.2337113 -0.1155429 1.468041 0.8597555 -0.003880563        NA
+# Test set      0.06730744 0.4325303 0.3370401  0.3582202 2.148718 1.2398721  0.583873949  1.099396
+
+(accTrain80Arima313 <- train80Arima313 %>% forecast(h = val70Pred) %>%
+  forecast::accuracy(ltsS01v2))
+#                       ME      RMSE       MAE        MPE     MAPE      MASE         ACF1 Theil's U
+# Training set -0.01274567 0.3093422 0.2336894 -0.1165774 1.467931 0.8596753 -0.004954519        NA
+# Test set      0.06690051 0.4324553 0.3370304  0.3556058 2.148711 1.2398364  0.583869360  1.099231
+
+
+
+indexInExcel70 <- dataS01[round(1622*.7),1]
+val70Pred <- 1622 - round(1622*.7)
+
+indexInExcel80 <- dataS01[round(1622*.8),1]
+val80Pred <- 1622 - round(1622*.8)
+#indexCutoff : Calculating the SeriesIndex the training set is ending on so that we can tell what points our forecast correspond with when we make our predictions
+# The Time Series doesn't recognize the 2 day skip, so it causes issues
+# To compare our predictions to the excel sheet it starts at 42315
+# the last SeriesIndex used was 42315
+# the last SeriesIndex is 43021
+
+#For printing predictions from the train/test partition
+# autoTrainPoint70 <- trainAuto70 %>% forecast(h = 487)
+# write_csv(data.frame(autoTrainPoint70$mean), "C:\\Users\\dcrai\\source\\repos\\DATA624\\Project 1\\S01Var0170 ARIMA211 Train Forecast.csv")
+# 
+# autoTrainPoint80 <- trainAuto80 %>% forecast(h = 324)
+# write_csv(data.frame(autoTrainPoint80$mean), "C:\\Users\\dcrai\\source\\repos\\DATA624\\Project 1\\S01Var0180 ARIMA312 Train Forecast.csv")
+
+```
+
+The ETS(A,N,N) model on the 80 set out performed the ARIMA models with a MAPE of 2.1477, but its AIC is so high we will stick with the ARIMA313 model for predictions
+```{r ETS}
+
+etsModel70 <- ets(train70)
+etsModel80 <- ets(train80)
+
+ets70 <- etsModel70 %>% forecast(h = val70Pred ) %>%
+  accuracy(ltsS01v2)
+ets70[,c("RMSE","MAE","MAPE","MASE")]
+
+#                   RMSE       MAE     MAPE      MASE
+# Training set 0.3176327 0.2391580 1.495160 0.8916522
+# Test set     0.6003841 0.4716845 2.978387 1.7585804
+
+ets80 <- etsModel80 %>% forecast(h = val80Pred ) %>%
+  accuracy(ltsS01v2)
+ets80[,c("RMSE","MAE","MAPE","MASE")]
+#                   RMSE       MAE     MAPE      MASE
+# Training set 0.3208570 0.2421693 1.519737 0.8908703
+# Test set     0.4325537 0.3369014 2.147722 1.2393619
+```
+
+# Naive & Average
+Both the naive and average methodologies performed poorly with MAPEs around 84
+```{r}
+# Fit the Naive model
+naiveModel70 <- naive(train70, h = 140)
+naiveModel80 <- naive(train80, h = 140)
+
+# Make predictions for the next 140 observations
+forecast(naiveModel70, h = 140) %>% forecast::accuracy(ltsS01v2)
+forecast(naiveModel80, h = 140) %>% forecast::accuracy(ltsS01v2)
+
+forecast(mean(train70), h = 1622) %>% forecast::accuracy(ltsS01v2)
+forecast(mean(train80), h = 1622) %>% forecast::accuracy(ltsS01v2)
+
+```
+## Full Model
+This full model shows a non-stationary series with clear long-running trends. A difference is needed and is confirmed by the KPSS Unit Root Test & `ndiffs`. ACF and PACF both show 2 spikes at lags 1 and 2. Suggesting a (0,1,2) or (2,1,0). We will use our trained model of (2,1,1)
+```{r Full Model ACF Plots}
+ltsS01v2 %>% diff() %>%
+  ggtsdisplay(xlab="Index",
+    main="Var01")
+
+ltsS01v2 %>% ur.kpss() %>% summary()
+ndiffs(ltsS01v2)
+#nsdiffs(ltsS01v2)
+```
+
+```{r 211 ARIMA Final Preds}
+arima313 <- Arima(ltsS01v2, order = c(3,1,3))
+
+arima313Preds <- arima313 %>% forecast(h = 140)
+
+#Note we exponentiated our predictions 
+write_csv(data.frame(exp(arima313Preds$mean)), "C:\\Users\\dcrai\\source\\repos\\DATA624\\Project 1\\S01Var02Final ARIMA313 Forecast.csv")
+
+```

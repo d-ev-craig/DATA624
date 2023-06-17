@@ -1,0 +1,285 @@
+---
+title: "Ch3 Data Prep and Exp Smoothing Notes"
+author: "Daniel Craig"
+date: "2023-06-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(AppliedPredictiveModeling)
+data(segmentationOriginal)
+```
+```{r}
+segData <- subset(segmentationOriginal,Case == "Train")
+
+cellID <- segData$Cell
+class <- segData$Class  
+case <- segData$Case  
+#Now remove the columns  
+segData <- segData[, -(1:3)]  
+
+statusColNum <- grep("Status",names(segData))
+statusColNum
+
+segData <- segData[,-statusColNum]
+```
+
+
+## Transformations to Resolve Skewness
+
+Firstly, the order:
+  1. transformation
+  2. center
+  3. scale
+  4. impute
+  5. feature extract
+  6. spatial sign
+
+Use log, square root, or inverse if data is skewed
+
+Skewed data rule of thumb: the ratio of data's highest vale to its lowest value being greater than 20 is considered significantly skewed.
+
+$$Skewness = \frac{\sum(x_i - \bar{x})^3}{(n-1)v^{3/2}}$$
+$$where \hspace{1mm} v = \frac{\sum(x_i - \bar{x})^2}{n-1}$$
+```{r}
+library(e1071)
+skewness(segData$AngleCh1)
+#all columns are numeric, allowing us to use the apply function
+
+skewness(segData$AngleCh1)
+
+skewValues <- apply(segData,2,skewness)
+head(skewValues)
+
+```
+
+### Family of Transformations / Box and Cox
+
+Statistical methods like the below family proposed by Box and Cox can be used to identify an appropriate transformation
+
+Square transformation ( $\lambda$ = 2)
+Square Root ($\lambda$ = .5)
+Inverse ($\lambda$ = -1)
+
+Not sure how but the training data is used to estimate $\lambda$ and Box-Cox use maximum likelihood estimation to determine tha transformation parameter. I assume max likelihoood is what determines lambda.
+
+$$x^* = \begin{cases}
+  \frac{x^{\lambda}-1}{\lambda} \text{ for }\lambda \neq 0
+  
+  \newline
+
+  log(x) \text{ for } \lambda = 0
+\end{cases}
+$$
+
+```{r}
+library(caret)
+Ch1AreaTrans <- BoxCoxTrans(segData$AreaCh1)
+
+#BoxCoxTrans will find the appropriate transformation and apply them to the data
+
+Ch1AreaTrans
+```
+```{r}
+head(segData$AreaCh1)
+
+#After Transformation
+predict(Ch1AreaTrans,head(segData$AreaCh1))
+```
+
+```{r}
+
+#caret also has preprocess() which is equivalent to prcomp below, will be covered later
+pcaObject <- prcomp(segData, 
+                    center = TRUE,
+                    scale. = TRUE)
+
+#Calc cum. percentage of variance which each component accounts for
+percentVariance <- pcaObject$sd^2/sum(pcaObject$sd^2)*100
+
+percentVariance[1:3]
+```
+
+
+## Transformation to Multiple Predictors
+
+This next section acts on groups of predictors with the entire set under consideration, ie. Resolving Outliers
+
+### Resolving Outliers
+
+Check to make sure the outlier isn't just due to skewness, an error, or a special part of the population
+
+Support Vector Machines and Tree Models tend to be resilient to Outliers
+
+1. Spatial Sign
+This projects the predictor values on to a multidimensional sphere, which makes all samples the same distance from the center of the sphere and each sampel is divided by its squared norm:
+
+$$x^*_ij = \frac{x_ij}{\sqrt(\sum_{j=1}^{P} x^2_ij)}$$
+
+Removing a predictor after performing spatial sign transformation can be problematic
+
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\KJ\\Chapter 3 Data Prep and Exp Smoothing\\Spatial Sign Trans.png")
+```
+
+```{r}
+#caret's spatialSign transformation
+spatialSign(segData)
+```
+
+## Data Reduction and Feature Extraction
+This is a class of predictor transformations where the methods reduce data by generating smaller sets of predictors but retain majority of info from original variables. This allows fewer variables. *Signal extraction* or *feature extraction*:Most of the time new predictors are function of original predictors.
+
+### PCA
+Principal Component Analysis seeks to find linear combinations of predictors to capture most variance. The first PC is a linear combination, subsequent PCs are a repeat of this but under the condition they remain independent from the first PC. PCA creates components that are uncorrelated to each other. Below, PC is represented. A_j1..2.. etc are *component weights* and act equivallently to linear regression coefficients. These coefficients are called "loadings."
+$$PC_j = (a_j1 * Predictor 1) + (a_j2 * Predictor2) + ...$$
+```{r}
+#$rotation accesses the variable loadings
+head(pcaObject$rotation[,1:3])
+
+```
+
+In the book example, two variables with high correlation were used to create a linear combination to serve as the new principal component.
+
+Cons: PCA can generate components that summarize unimportant aspects of the data
+ PCA targets predictors with the highest variation first since it is attempting to maximize variance capture. Due to this, it ignores importance of relationships and requires checking for and transforming skewed predictors, and center and scaling the predictors.
+ PCA does not consider the modeling objective or the response, and is an unsupervised technique. If there is no relatinoship between predictors and response or their variability.. PCA will not provide a suitable relationship. *PLS*, alternatively, derive components while simultaneously considering response.
+ 
+ 1. Determine appropriate transformations for data (log, square root, inverse,..)
+ 2. Determine which components to retain
+ 
+ ### Retaining Components
+ Using a scree plot, that shows the ordered components(axis) and the amount of summarized variability(y axis). Sounds like a bar plot, but its not.
+  Usually there will be a few major components and a steep drop off in summarized variability. The last component to be kept is typically the one before the drop. In automated model buildling, the optimal number of components is determined by cross-validation.
+  
+  If you plot these components, their scale may change bewteen components, and could lead to a mistake in over-interpreting some values.
+  You can also create a scatterplot for groups of principal components. In the book's cell example, they noted how in the top right plot, there seems to be a distinction of classes where well separated cells are clearly and distinctly contained inside the cells that are not well separated in imaging. Recall the example being rendering images of stained cell components and their images that render would sometimes not show the cell separation well. Insert PCA to try and improve the ability to render the image.
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\KJ\\Chapter 3 Data Prep and Exp Smoothing\\Scatterplot Components.png")
+```
+
+### Associating Predictors to Components
+
+  Recall that our book's cell example divided cell components into channels representing different cell components (.ie Cell body, nucleus, etc.)
+  
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\KJ\\Chapter 3 Data Prep and Exp Smoothing\\PCA Scatterplot Channel Comparison.png")
+```
+  
+  After including channels as a categorizer. We can see how in the first principal component, channel one(cell body) held the most weight in explaining variability. Subsequently, in the 2nd and 3rd PC's Channel 3 ( actin) were on the extremes. From this we can tell, that the predictor variables associated with Channel 1 and 3 could be the most valuable predictors out of our set.
+  
+## Missing Values
+
+  *Informative Missingness*: when the lack of data is intended structurally and is treated as predictive(ie. number of children someone has in relation to their salary)
+  Understand why the data is missing.
+  *Censored Data*: when the exact value is missing but something is known about the value (ie. in a lab we can't measure below a certain limit, so we know that the data will be lower than the limit which is different than "0").
+  
+In traditional stats models, the censoring is taken into account formally as assumptions about the censoring mechanism. For predictive models, it smore common to treat them as missing or using censored values as observed values. In the example of measuring below a limit, its common to use a random number between 0 and the limit of detection. Sometimes the msising data is related to a specific set of samples and can be dropped. Another method is to impute the data. *Imputation*: estimating values of a predictor variable based on other predictor variables. This can be done with the KNN model. You can also use a linear regression model built from data that had very high correlation with the missing data to generate new values.
+
+```{r}
+#can use impute's package function 'impute.knn' to do this
+#preProcess can also impute with KNN or bagged trees
+```
+
+```{r}
+# to perform multiple transformations to multiple data sets.. preProcess shines
+
+trans <- preProcess(segData,
+                    method = c("BoxCox","center","scale","pca"))
+
+trans
+```
+```{r}
+transformed <- predict(trans,segData)
+#these values will be different than prcomp since they were transformed prior to PCA
+head(transformed[,1:5])
+```
+
+
+## Removing Predictors
+  Its usually good to remove *"near-zero variance predictors"*, which are variables with a single unique value. It contains no variance and can break models like linear regression, although a tree model is impervious to it.
+  
+  Imagine a text mining app that finds one keyword that appears in only four documents it was found. The other 523 do not contain it. Each doc only had it appear 1 -6 times. Using this keyword in a model, if its involved in resampling it may overcentralize the model as outliers, it may also not be involved at all in resampling.
+  
+  To detect near-zero variance predictors:
+    * fraction of unique values over the sample size is 10% or less
+    *the ratio of the frequency of the most prevalent value to the frequency of the 2nd most is large (around 20)
+
+  If both above criteria are filled, it may help in removing the variable.
+  
+```{r}
+#caret's nearZeroVar() will return the appropriate column numbers matching conditions for near zero variance predictors
+
+nearZeroVar(segData)
+
+#our result is zero, when they should be removed it will be a vector of integers representing column indices
+```
+
+  
+### Between-Predictor Correlations
+  Collinearity can indicate multiple variables that are all representing the same info. PCA can highlight this problem by aggregating those variables into a single component to identify the important piece of the relationships between these correlated variables. Using highly correlated data can create unstable models and degraded predictive performance. In linear regression, the variance inflation factor can be used. In predictive modeling, the following steps tend to be more useful:
+  1. Calculate the correlation matrix of the predictors.  
+  2. Determine the two predictors associated with the largest absolute pairwise  correlation (call them predictors A and B).  
+  3. Determine the average correlation between A and the other variables.  Do the same for predictor B.  
+  4. If A has a larger average correlation, remove it; otherwise, remove predictor B.  
+  5. Repeat Steps 2–4 until no absolute correlations are above the threshold. 
+  
+  For a model that is particularly sensitive to between-predictor correlations, the threshold of .75 correlation between variables in a correlation matrix can be used.
+  
+```{r}
+correlations <- cor(segData)
+dim(correlations)
+correlations[1:4,1:4]
+```
+
+```{r}
+library(corrplot)
+corrplot(correlations, order = "hclust")
+#order = hclust will order variables to reveal clusters of highly correlated predictors
+```
+
+```{r}
+#findCorrelation will help find column numbers that are recommended for deletion per the cutoff option level
+highCorr <- findCorrelation(correlations, cutoff = .75)
+length(highCorr)
+head(highCorr)
+filteredSegData <- segData[, -highCorr]
+```
+
+```{r}
+library(tidyverse)
+
+mtcars
+simpleMod <- dummyVars(~.,
+                       data = mtcars,
+                       #Remove variable names from column name
+                       levelsOnly = TRUE)
+simpleMod
+
+## to create the dummy vars we call predict with our new dummyVars object
+
+predict(simpleMod, mtcars)
+
+## this is a bad example but the dataset the text refers to seems to be bunk (cars data from caret, for me it only gives speed and dist, for him its mileage, type, etc.)
+```
+
+
+  
+## 3.6 Adding Predictors
+  Sometimes use dummy variables
+
+## 3.7 Binning Predictors
+  Sometimes you want to avoid this. An example of this is binning data. "Binning" data  means to take numeric predictors and pre-categorize them into two or more groups prior to data analysis. ie. if there are 7 symptoms commonly seen with a disease, a survey may have a doctor report a patient has the disease if they meet 2 criteria. 
+  1. This can cause a degradation in performance of models as it simplifies relationships between variables (we are good at understanding complex relationships usually).
+  2. Loss of precision in predictions when the predictors are categorized. If there are only two binned predictors, only four combinations can exist in the data set and be analyzed for intuition.
+  3. Categorizing predictors can lead to a high rate of false positives (Austin and Brunner 2004 study)
+  
+  
+Useful code:
+* `apropos("confusion")` find function in loaded libraries with key word confusion
+* `RSiteSearch("confusion", restrict = "functions")` searchonline to find matches
+
+
+

@@ -1,0 +1,371 @@
+---
+title: "HA Ch7 Exp Smoothing Notes"
+author: "Daniel Craig"
+date: "2023-06-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(fpp2)
+library(forecast)
+```
+
+## Exp Smoothing
+|   We will be working with the following data from the fpp2 library.
+
+```{r}
+oildata <- window(oil, start=1996)
+autoplot(oildata) +
+  ylab("Oil (millions of tonnes)") + xlab("Year")
+```
+
+### Simple Exp Smoothing
+* Suitable for forecasting data with no clear trend or seasonal pattern
+
+|   Simple exponential smoothing sums all of prior observations while giving more weight to more recent observations. The larger $\theta$ is the more weight is given to more recent observations and vice versa for older observations. Weights will decrease exponentially as we go back in time. This is accomplished with the following formula:
+
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\HA\\Ch 7 Exp Smoothing\\Simple Exp Smoothing Formula.png")
+```
+#### Equivalent Weighted Avg Form
+|   The idea here is that the forecast at T + 1 is equal to the weighted average between the most recent observation and the previous forecast. This ultimately comes out to, where L_o is the first fitted vale at time 1 (which we estimate):
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\HA\\Ch 7 Exp Smoothing\\SES Weighted Average Form.png")
+```
+
+#### Component Form
+|   For this one, it is easy to use when we start adding multiple components. IF you observe the below picture, it is a forecast equation and a smoothing equation for each of the components included in the method. For the Simple Exp Smoothing (SES) form it looks like below. If you look at the Forecast equation it states that the forecast value at t+1 is the estimated level at time t. That estimated level (L_t) is represented by the Smoothing Equation.
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\HA\\Ch 7 Exp Smoothing\\SES Component Form.png")
+```
+
+#### Flat Form
+|   This results in all forecasts taking the same value, equal to the last level component. These are only good to use when there is no trend or seasonal component. Recall that the level means the smoothed value of the series at time t. Recall that the smoothed value is going to be the value of a past observation "smoothed" with some value of $\theta$
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\HA\\Ch 7 Exp Smoothing\\SES Flat Form.png")
+```
+
+#### Optimizing SES
+|   In all forms, there was a $\theta$ or $\hat{l_o}$. We choose these by minimizing the Sum of Squared Errors for these values.
+```{r}
+oildata <- window(oil, start=1996)
+# Estimate parameters
+fc <- ses(oildata, h=5)
+# Accuracy of one-step-ahead training errors
+forecast::accuracy(fc)
+
+
+
+fc$model
+#We can see from the model output that alpha was .833 and l was 446.58
+```
+```{r}
+autoplot(fc) +
+  autolayer(fitted(fc), series="Fitted") +
+  ylab("Oil (millions of tonnes)") + xlab("Year")
+```
+
+## Trend Methods w/ SES
+|   Holt extended SES to allow forecasting of data with a trend by using two trend equations, one for the level and another for the trend. Holt's method tends to over-forecast, especially for longer horizons.
+|   $b_t$ denotes an estimate of the slope(trend) of the series at time $t$ and $\beta^*$ is the smoothing parameter for the trend.
+|   $h$ is just a weight applied to the last estimated trend value($b_t$) and the forecasts are therefore a linear function of h
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\HA\\Ch 7 Exp Smoothing\\Holt SES Trend.png")
+```
+
+### Example of Holt's SES Trend
+```{r}
+air <- window(ausair, start=1990)
+fc <- holt(air, h=5)
+
+fc$model
+```
+## Damped trend methods
+|   To deal with Holt's over-forecasting, Gardner & McKenzie introduced a parameter that "dampens" the trend to a flat line some time in the future. Damped trend methods are the most popular individual methods when forecasts are requried automatically for many series. This method introduces a new parameter $\phi$, if it is equal to 1, it is identical to Holt's method, and equal to zero. This parameter is responsible for dampening the trend so that it approaches a constant at some point in the future. This means short run forecasts trend and long-run forecasts are constant.
+|   $\phi$ is normally never below .8 and rarely above .98. Below, $\phi$ is set to .9 (relatively low)
+```{r}
+fc <- holt(air, h=15)
+fc2 <- holt(air, damped=TRUE, phi = 0.9, h=15)
+autoplot(air) +
+  autolayer(fc, series="Holt's method", PI=FALSE) +
+  autolayer(fc2, series="Damped Holt's method", PI=FALSE) +
+  ggtitle("Forecasts from Holt's method") + xlab("Year") +
+  ylab("Air passengers in Australia (millions)") +
+  guides(colour=guide_legend(title="Forecast"))
+```
+
+## Comparing SES vs Holt vs Damped
+|   Recall,
+    1. SES - a function of all past observations, weighting more recent observations
+    2. Holt - Extended SES by adding a trending component
+    3. Damped - Added a dampening factor to Holt's trend to keep it from over-forecasting in the long run
+
+```{r}
+autoplot(livestock) +
+  xlab("Year") + ylab("Livestock, sheep in Asia (millions)")
+```
+Below, is using time series cross-validation(`tsCV()`) to compare only the one-step forecast accuracy of each model.
+```{r}
+e1 <- tsCV(livestock, ses, h=1)
+e2 <- tsCV(livestock, holt, h=1)
+e3 <- tsCV(livestock, holt, damped=TRUE, h=1)
+# Compare MSE:
+mean(e1^2, na.rm=TRUE)
+#> [1] 178.3
+mean(e2^2, na.rm=TRUE)
+#> [1] 173.4
+mean(e3^2, na.rm=TRUE)
+#> [1] 162.6
+# Compare MAE:
+mean(abs(e1), na.rm=TRUE)
+#> [1] 8.532
+mean(abs(e2), na.rm=TRUE)
+#> [1] 8.803
+mean(abs(e3), na.rm=TRUE)
+#> [1] 8.024
+```
+|   Damped Holt's method is best when comparing MAE or MSE so we will continue using it for the entire data set for forecasts into future years.
+```{r}
+fc <- holt(livestock, damped=TRUE)
+# Estimated parameters:
+fc[["model"]]
+#> Damped Holt's method 
+
+```
+|   We can see that $\phi$ (phi) is .979, which is almost at our maximum of .98 and causes our smoothing parameter for the slope to be nearly zero. We can infer that the trend is not changing over time. $\alpha$ (alpha) is also very close to one, showing that level reacts strongly to new/recent observations.
+|   Recall,
+      1. $\alpha$ Smoothing paramter for old vs new observations
+      2.$\beta$ Smoothing parameter for estimates of the trend
+      3. $\phi$ dampening parameter for $\beta$ to ensure the forecast isn't overestimated in long horizons
+      
+|   Our predicted forecast below. You can infer that the wide prediction intervals are a result of the significant variance in historical data
+```{r}
+autoplot(fc) +
+  xlab("Year") + ylab("Livestock, sheep in Asia (millions)")
+```
+
+## Holt-Winters Seasonality
+|   A third component was introduced to capture seasonality $s_t$ with a smoothing parameter $\gamma$ (gamma). We use $m$ to denote the frequency of the seasonality in a year. Quarterly : $m$ = 4, monthly $m$ = 12
+|   There are two methods:
+<br>
+
+  1. Additive method: preferred when seasonal variations are roughly constant
+    * expressed in absolute terms in the scale of the observed series, level equation is adjusted by subtracting the seasonal component
+    * within each year, seasonal component will add up to approximately zero
+<br>
+    2. Multiplicative method: when seasonal variations are changing proportional to the level of the series
+    * typically better than additive when the seasonal variation increases as the level increases
+    * expressed in percentages
+    * adjusted by dividing through by the seasonal component
+    * the seasonal component will sump up to approximately $m$
+
+### Holt-Winters Additive Method
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\HA\\Ch 7 Exp Smoothing\\HoltWinters Seasonal Additive Method.png")
+```
+|   Note that $k$ is the interger part of $(h - 1)/m$ that ensures estimates of seasonal indices for forecasting come from the final year of the sample.
+|   The level equation is comprised of two parts. One which is the seasonally adjusted observation $y_t - s_{t-m})$ and the other is the non-seasonal forecast $(l_{t-1}+b_{t-1})$
+|   The trend equation is the identical to Holt's linear method.
+|   The seasonal equation is a weight average between the current seasonal index $(y_t - l_{t-1} - b_{t-1})$ and the index of the same season from last year $(s_{t-m})$ with a smoothing parameter $(1-\gamma)$
+
+### Holt-Winters Multiplicative Method
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\HA\\Ch 7 Exp Smoothing\\HoltWinters Seasonal Mult Method.png")
+```
+#### HoltWinters Seasonal Method Example
+|   Forecasting quarterly visitor nights in Austrailia spent by international tourists. Parameters estimated by minimizing RMSE.
+```{r}
+aust <- window(austourists,start=2005)
+fit1 <- hw(aust,seasonal="additive")
+fit2 <- hw(aust,seasonal="multiplicative")
+autoplot(aust) +
+  autolayer(fit1, series="HW additive forecasts", PI=FALSE) +
+  autolayer(fit2, series="HW multiplicative forecasts",
+    PI=FALSE) +
+  xlab("Year") +
+  ylab("Visitor nights (millions)") +
+  ggtitle("International visitors nights in Australia") +
+  guides(colour=guide_legend(title="Forecast"))
+```
+### Holt-Winters' Seasonal Damped Method
+|   This extends the multiplicative and additive method. Typically the multiplicative method with a damped trend performs quite well.
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\HA\\Ch 7 Exp Smoothing\\HoltWinters Seasonal Damped Method.png")
+```
+|   Basic syntax below with option damped and seasonal.
+```{r}
+#hw(y, damped=TRUE, seasonal="multiplicative")
+```
+#### HW Seasonal Damped Example
+|   The HW method can be used for daily type of data where the seasonal period is m =7, and $h$ is in days. Below is a forecast for the last five weeks for the `hyndsight` data with daily pageviews for a year.
+```{r}
+fc <- hw(subset(hyndsight,end=length(hyndsight)-35),
+         damped = TRUE, seasonal="multiplicative", h=35)
+autoplot(hyndsight) +
+  autolayer(fc, series="HW multi damped", PI=FALSE)+
+  guides(colour=guide_legend(title="Daily forecasts"))
+```
+## Taxonomy of Exp Smoothing Methods
+|   There are two components and three variations to both that comprise the exponential smoothing methdos we've covered. The two factors are Trend and Seasonal Component. 
+|   The variations for Trend are the following three: None, Additive, Additive Damped.
+|    For Seasonal: None, Additive, Multiplicative.
+<br>
+
+These combinations result in the below combinations.  
+  
+**Multiplicative Trend methods are not included since they tend to produce poor forecasts**
+More info on all methods by Hyndman, Koehler, Ord, & Snyder (2008)
+
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\HA\\Ch 7 Exp Smoothing\\Taxonomy of ES Methods.png")
+```
+**SES**: Sums observations from the past with a smoothing parameter that adds more weight to more recent observations, parameter estimated by minimising SSE
+<br>
+<br>
+**Holt's Linear/Trend Method**: Incorporates a trending parameter to account for trends
+<br>
+<br>
+**Additive Damped**: Incorporates a dampening parameter that causes the trending parameter to converge to a flat value over time since under Holt's Linear Method it would tend to overforecast.
+<br>
+<br>
+**Additive HW Method**: Incorporates a seasonality parameter, not good with highly variance seasonality data
+<br>
+<br>
+**Multiplicative HW Method**: Same as above, but is better with highly variant seasonal data
+<br>
+<br>
+**HW Damped Method**: Same as prior HW methods, but adds a dampening factor similar to the Additive Damped model for the same reason as it was used in the Damped model.
+<br>
+<br>
+**Components:**
+*$l_t$: series level (central tendency) at time $t$
+*$b_t$: slope/trend at time $t$
+*$s_t$: seasonal component at time $t$
+*$m$: number of seasons in a year
+
+**Smoothing Parameters:**
+*$\alpha$: Smoothing for series level $l_t$ in SES
+* $\Beta^*$: Smoothing for slope/trend
+*$\phi$: Dampening for the trend 
+*$\gamma$: smoothing for seasonal
+
+
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\HA\\Ch 7 Exp Smoothing\\ES Formulas Chart.png")
+```
+
+## State Space Models
+|   Chart for all models.
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\HA\\Ch 7 Exp Smoothing\\StateSpace Model Chart.png")
+```
+
+|   In this section we will talk about the statistical models that underly the Exponentional Smoothing forecasts we created. The main difference here is that the statistical models can create entire distributions of forecasts, while Exp. Smoothing is just picking one. These stat models are responsible for creating the prediction intervals/windows you see.
+|   Each model consists of a measurement equation that describes observed data, and some state equations that describe how the unobserved components or states (level, trend, seasonal) change over time. Thus they are called **state space models**.
+|   For each method there is an additive and multiplicative method. Both generate the same point predictions if using the same parameters, but generate different prediction intervals.
+|   We add a third letter to the Taxonomy table for ES(exp. smoothing) from earlier. We label exact state space model as ETS(.,.,.,) for Error, Trend, Seasonal. The possibilities for each are as follows:
+*Error: Additive, Multiplicative (A,M)
+*Trend: None, Additive, Additive Damped (N,A,Ad)
+*Seasonal: N,A,M
+
+### ETS(A,N,N) SES w/ Add. Errors
+|   Since the state space model, is a statistical model that encompasses our forecast equation, we can perform some algebra to get our equations for the state space model. Below is our ETS(A,N,N) model.
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\HA\\Ch 7 Exp Smoothing\\StateSpace Model Creation.png")
+```
+|   We can see that we replace $(y_t - l_{t-1})$ with our error term $e_t$. These "error" terms will adjust our level components higher or lower. If we continue, we can replace our observation $y_t$ equation as being the previous level plus an error. We refer to the top equation as the *measurement equation* (or observation equation) and the lower equation as the *state equation* (or transition equation).
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\HA\\Ch 7 Exp Smoothing\\Measurement and State Equation.png")
+```
+|   From here we only need to define the probability distribution for $e_t$ and we have our fully specified statistical model. "Innovations" refers to the fact that all equations use the same random error process, $\epsilon_t$ and this model in particular only has one source of error.
+### ETS(M,N,N) SES w/ Mult. Errors
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\HA\\Ch 7 Exp Smoothing\\ETS MNN SES Mult Error.png")
+```
+### ETS(A,A,N) Holt's Linear w/ Add. Errors
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\HA\\Ch 7 Exp Smoothing\\ETS AAN Holt Add Error.png")
+```
+### ETS(M,A,N) Holt's Linear w/ Mult. Errors
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\HA\\Ch 7 Exp Smoothing\\ETS MAN Holt Mult Error.png")
+```
+
+
+## Estimation and Model Selection
+|   Here we cover the oppositie of minimizing SSE.. maximizing likelihood. Originally, we minimized SSE to establish the parameters to be used in our models (ie. $l_o$ $\alpha$, $b_0$, $\Beta$, etc.). Now we'll do it with maximizing likelihood. This makes no difference in additive models, but does make a difference in multiplicative models. Below are some restrictions on these parameters and the values they can take. There are some "admissiable" parameters that extend the range outside just 0 to 1.
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\HA\\Ch 7 Exp Smoothing\\Restrictions of Parameters.png")
+```
+### Model Selection
+|   For model selection, AIC, AIC_c, and BIC are used.
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\HA\\Ch 7 Exp Smoothing\\Choosing Models.png")
+```
+|   Three combinations of Error, Trend, and Seasonal can lead to numerical difficulties since they involve close to zero computations. These models are ETS(A,N,M), ETS(A,A,M), and ETS(A, A_d, M).
+|   Models with mult. errors are useful only when data are strictly positive, but can't be used when the data contains zeros or negative values.
+|   The ets() function will be the primary evaluator in which parameters and models are best suited. An example of its most important syntax is below. It returns an object of class `ets` and a list of functions that can take it are beneath this.
+```{r}
+#ets(y, model="ZZZ", damped=NULL, alpha=NULL, beta=NULL,
+    #gamma=NULL, phi=NULL, lambda=NULL, biasadj=FALSE,
+    #additive.only=FALSE, restrict=TRUE,
+    #allow.multiplicative.trend=FALSE)
+```
+`coef()`: returns all fitted parameters.
+`accuracy()`: returns accuracy measures computed on the training data.
+`summary()`: prints some summary information about the fitted model.
+`autoplot()` and `plot()': produce time plots of the components.
+`residuals()`: returns residuals from the estimated model.
+`fitted()`: returns one-step forecasts for the training data.
+`simulate()`: will simulate future sample paths from the fitted model.
+`forecast()`: computes point forecasts and prediction intervals, as described in the next section.
+
+### Example with StateSpace Models
+```{r}
+aust <- window(austourists, start=2005)
+fit <- ets(aust)
+summary(fit)
+```
+```{r}
+autoplot(fit)
+```
+|   We can obtain residuals from the model using `residuals()`, we graph the residuals given by $\hat{\epsilon_t}$ on top, and the one-step training errors defined as $y_t - \hat{y_{t|t-1}}$ on the bottom. The type argument is used to distinguish between the two, default is 'innovation' which gives regular residuals.
+```{r}
+cbind('Residuals' = residuals(fit),
+      'Forecast errors' = residuals(fit,type='response')) %>%
+  autoplot(facet=TRUE) + xlab("Year") + ylab("")
+```
+## Forecasting with ETS Models
+|   Point forecasts are obtained from the models by iterating the equations at each $t = T + 1,.. T +h$ and setting all $\epsilon_t = 0$ for $t > T$. The point forecasts from the ETS models will be identical to the underlying models (ie. Holt's Linear method or equivalents). You can check these by matching the charts.
+|   Point forecasts from ETS models are equivalent to the medians of the forecast distributions. Additive models have medians equal to means, and are the same. Multiplicative models will have differnces between median and mean.
+|   Use `forecast()`for ETS models
+```{r}
+fit %>% forecast(h=8) %>%
+  autoplot() +
+  ylab("International visitor night in Australia (millions)")
+```
+### Prediction Intervals with ETS Models
+|   The intervals are : $$\hat{y_{T+h|T}\pm c\sigma_h}$$
+where $c$ is coverage probability, and $\sigma^2_h$ is forecast variance.
+|   Formulas for forecast variance if you need it:
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\HA\\Ch 7 Exp Smoothing\\Forecast Variance.png")
+```
+###Forecast Options with ETS Models
+```{r}
+# forecast(object, h=ifelse(object$m>1, 2*object$m, 10),
+# level=c(80,95), fan=FALSE, simulate=FALSE, bootstrap=FALSE,
+# npaths=5000, PI=TRUE, lambda=object$lambda, biasadj=NULL, ...)
+```
+`object`: The object returned by the ets() function.
+`h`: The forecast horizon — the number of periods to be forecast.
+`level`:The confidence level for the prediction intervals.
+`fan`:If fan=TRUE, level=seq(50,99,by=1). This is suitable for fan plots.
+`simulate`:If simulate=TRUE, prediction intervals are produced by simulation rather than using algebraic formulas. Simulation will also be used (even if simulate=FALSE) where there are no algebraic formulas available for the particular model.
+`bootstrap`:If bootstrap=TRUE and simulate=TRUE, then the simulated prediction intervals use re-sampled errors rather than normally distributed errors.
+`npaths`:The number of sample paths used in computing simulated prediction intervals.
+`PI`:If PI=TRUE, then prediction intervals are produced; otherwise only point forecasts are calculated.
+`lambda`:The Box-Cox transformation parameter. This is ignored if lambda=NULL. Otherwise, the forecasts are back-transformed via an inverse Box-Cox transformation.
+`biasadj`:If lambda is not NULL, the back-transformed forecasts (and prediction intervals) are bias-adjusted.

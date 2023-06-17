@@ -1,0 +1,796 @@
+---
+title: "Project1"
+author: "Daniel Craig"
+date: "2023-06-15"
+output: html_document
+---
+
+#To do list:
+1. Compare auto.arima with log version of the data
+  - original data
+2. Compare auto.arima with means instead of removed NAs
+3. Try a (2,0,0) model
+4. Try a seasonal model?
+DONE5. tsCV - Cross Validate
+DONE6. test/train
+7. Check best ARIMA models again
+  -rotate through all?
+  -double check reasons that give clues to the right model from ACF/PACF
+  
+  
+  Could be from outliers
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(forecast) #accuracy
+library(tidyverse)
+library(readr)
+library(e1071) #skewness
+library(urca) #for ur.kpss()
+
+#data <- read_csv("C:\\Users\\dcrai\\source\\repos\\DATA624\\Project 1\\Data Set for Class.csv", col_types = cols(SeriesInd = col_date(format = "%m/%d/%y")))
+
+data <- read_csv("C:\\Users\\dcrai\\source\\repos\\DATA624\\Project 1\\Data Set for Class.csv")
+
+dataS01 <- data %>% filter(category == 'S01') %>% select(SeriesInd, category, Var01)
+
+#dataS05v2 <- data %>% filter(category == 'S05') %>% select(SeriesInd, category,Var02)
+
+```
+NAs were replaced with equivalent fractions of the difference between the observations on either side of the NA gap. Also removing the last 140 empty spots meant for prediction so that they do not influence the model.
+
+```{r Removing NAs}
+#NA
+which(is.na(dataS01$Var01))
+
+nullAdd <- (dataS01$Var01[1536] - dataS01$Var01[1539])/3
+
+dataS01$Var01[1537] <- dataS01$Var01[1536] - nullAdd
+dataS01$Var01[1538] <- dataS01$Var01[1537] - nullAdd
+
+dataS01$Var01[1536:1539]
+
+#Removing the 140 empty values
+dataS01 <- dataS01[-c(1623:1762),]
+
+
+```
+
+Below is code chunk for checking skewness. Both with skewness() and the ratio between maximum and minimum of the variable. Benchmark is if the ratio is equal to 20 or high. With such low skewness, no transformation was chosen to retain interpretability of the data.
+```{r Skewness}
+#Skewness
+skewness(dataS01$Var01)
+max(dataS01$Var01)/min(dataS01$Var01) #Checked using the benchmark of ratio of max to min >= 20
+#BoxCoxTrans(dataS01$Var01) #Checking what BoxCox would do, its a log
+```
+Model with NA's replaced
+```{r Full Data TimeSeries}
+tsS01v1 <- ts(dataS01$Var01,
+              start = min(dataS01$SeriesInd),
+              frequency =1)
+
+#length(tsS01v1) to confirm 1622 observations
+
+#tsS01v1
+
+
+autoplot(tsS01v1) + ylab("Var01") +xlab("SeriesIndex")
+```
+I tested for seasonality both by reformatting the SeriesInd index as date, as well as testing weekly data since the indexes skipped weekends. Also tested other numbers like 7, 4, 12, 24, etc.
+```{r Seasonality Checking}
+season5TS <- ts(dataS01$Var01,
+              start = min(dataS01$SeriesInd),
+              frequency =5) #Weekly
+
+season20TS <- ts(dataS01$Var01,
+              start = min(dataS01$SeriesInd),
+              frequency =20) #Monthly
+
+season60TS <- ts(dataS01$Var01,
+              start = min(dataS01$SeriesInd),
+              frequency =60) #Quarterly
+
+season240TS <- ts(dataS01$Var01,
+              start = min(dataS01$SeriesInd),
+              frequency =240) #Yearly
+
+nsdiffs(season5TS)
+nsdiffs(season20TS)
+nsdiffs(season60TS)
+nsdiffs(season240TS)
+
+```
+
+
+```{r Train/Test Split}
+
+# 1622 observations, 70/30 split, 1135 is the 70th percentile obs
+valsToPredict70 <- 1622 - round(1622*.7)
+valsToPredict80 <- 1622 - round(1622*.8)
+
+#40669 was start id in the time series
+endValTS70 <- 40669 + round(1622*.7)
+endValTS80 <- 40669 + round(1622*.8)
+
+length(dataS01$SeriesInd)
+dataS01[1135,1]
+dataS01[1622,1]
+
+
+
+train70 <- window(tsS01v1, end = endValTS70)
+train80 <- window(tsS01v1, end = endValTS80)
+```
+On the training data, not much is discernible from the ACF and PACF plots.
+```{r train ACF Plots}
+train70 %>% diff() %>%
+  ggtsdisplay(xlab="Index",
+    main="Var01")
+
+train70 %>% ur.kpss() %>% summary()
+ndiffs(train)
+
+
+#80 Split
+train80 %>% diff() %>%
+  ggtsdisplay(xlab="Index",
+    main="Var01")
+
+train80 %>% ur.kpss() %>% summary()
+ndiffs(train)
+
+
+```
+```{r nonSeasonal ARIMA All}
+
+testNonSeasonalArima <- function(data) {
+  #Instantiate a list
+  models <- list()
+
+  # Iterate through each of the potential values for p,d,q
+  for (p in 0:3) {
+    for (d in 0:1) {
+      for (q in 0:3) {
+        # Skip the (0,0,0) model as it is equivalent to the mean
+        if (p == 0 && d == 0 && q == 0) {
+          next
+        }
+        
+        # Fit the ARIMA models
+        model <- tryCatch({
+          arimaModel <- Arima(data, order = c(p, d, q), include.mean = TRUE)
+          modelName <- paste0("ARIMA(", p, ",", d, ",", q, ")")
+          models[[modelName]] <- arimaModel
+        }, error = function(e) {
+          NULL
+        })
+      }
+    }
+  }
+
+  # Return the list of models
+  return(models)
+}
+
+
+
+testNonSeasonalArima(train80)
+
+# Train AIC 70
+# ARIMA010 1238
+# ARIMA011 1236.52
+# ARIMA012 1236.45
+# ARIMA112 1236.35
+# ARIMA210 1236.24
+# ARIMA211 1236.17
+```
+
+Residuals from ARIMA211 model do not pass the Ljung-Box Test and has several observations breaching the ACF.
+```{r Train AutoArima}
+(trainAuto70 <- auto.arima(train70, stepwise=FALSE, approximation = FALSE))
+#1235.01  ARIMA2,1,1
+
+(trainAuto80 <- auto.arima(train80, stepwise=FALSE, approximation = FALSE))
+#1500.94 ARIMA213
+
+trainAuto70 %>% forecast() %>% autoplot()
+
+trainAuto80 %>% forecast() %>% autoplot()
+
+checkresiduals(trainAuto70, lag = 50)
+checkresiduals(trainAuto80, lag =50)
+```
+```{r Accuracy Check}
+
+indexInExcel70 <- dataS01[round(1622*.7),1]
+val70Pred <- 1622 - round(1622*.7)
+
+indexInExcel80 <- dataS01[round(1622*.8),1]
+val80Pred <- 1622 - round(1622*.8)
+#indexCutoff : Calculating the SeriesIndex the training set is ending on so that we can tell what points our forecast correspond with when we make our predictions
+# The Time Series doesn't recognize the 2 day skip, so it causes issues
+# To compare our predictions to the excel sheet it starts at 42315
+# the last SeriesIndex used was 42315
+# the last SeriesIndex is 43021
+
+
+autoTrainPoint70 <- trainAuto70 %>% forecast(h = 487)
+write_csv(data.frame(autoTrainPoint70$mean), "C:\\Users\\dcrai\\source\\repos\\DATA624\\Project 1\\S01Var0170 ARIMA211 Train Forecast.csv")
+
+autoTrainPoint80 <- trainAuto80 %>% forecast(h = 324)
+write_csv(data.frame(autoTrainPoint80$mean), "C:\\Users\\dcrai\\source\\repos\\DATA624\\Project 1\\S01Var0180 ARIMA312 Train Forecast.csv")
+
+(accTrain70 <- trainAuto70 %>% forecast(h = val70Pred) %>%
+  forecast::accuracy(tsS01v1))
+# AIC 1235.01  ARIMA2,1,1
+# Ljung-Box test
+# 
+# data:  Residuals from ARIMA(2,1,1) with drift
+# Q* = 67.967, df = 47, p-value = 0.02432
+# 
+# Model df: 3.   Total lags used: 50
+
+#MAPE of .92, which is good if its less than a percentage point, we want something close to 0
+
+(accTrain80 <- trainAuto80 %>% forecast(h = val80Pred) %>%
+  forecast::accuracy(tsS01v1))
+
+#MAPE of 16.95, is not as good as our 70% dataset so we will use the 2,1,1 from that set
+
+
+
+
+```
+
+#Naive & Average
+Both the naive and average methods performed pretty poorly with MAPE scores nearly at 100.
+```{r}
+# Fit the Naive model
+naiveModel70 <- naive(train70, h = 140)
+naiveModel80 <- naive(train80, h = 140)
+
+# Make predictions for the next 140 observations
+forecast(naiveModel70, h = 140) %>% forecast::accuracy(tsS01v1)
+forecast(naiveModel80, h = 140) %>% forecast::accuracy(tsS01v1)
+
+forecast(mean(train70), h = 1622) %>% forecast::accuracy(tsS01v1)
+forecast(mean(train80), h = 1622) %>% forecast::accuracy(tsS01v1)
+
+```
+
+
+The ETS model on both a 70 and 80 training set are heavily outperformed by the ARIMA211 with MAPEs at 8.9 and 17 on the testing set.
+```{r ETS}
+
+etsModel70 <- ets(train70)
+etsModel80 <- ets(train80)
+
+ets70 <- etsModel70 %>% forecast(h = 487 ) %>%
+  accuracy(tsS01v1)
+ets70[,c("RMSE","MAE","MAPE","MASE")]
+
+#                   RMSE       MAE      MAPE       MASE
+# Training set 0.4169412 0.2983669 0.9273414  0.9991337
+# Test set     6.0101099 5.0228800 8.9834901 16.8199943
+
+ets80 <- etsModel80 %>% forecast(h = 324 ) %>%
+  accuracy(tsS01v1)
+ets80[,c("RMSE","MAE","MAPE","MASE")]
+#                   RMSE       MAE       MAPE       MASE
+# Training set 0.4320533 0.3061947  0.9014928  0.9996496
+# Test set     9.8942881 9.0641608 17.0265313 29.5922347
+```
+
+## Full Model
+This full model shows a non-stationary series with clear long-running trends. A difference is needed and is confirmed by the KPSS Unit Root Test & `ndiffs`. ACF and PACF both show 2 spikes at lags 1 and 2. Suggesting a (0,1,2) or (2,1,0). We will use our trained model of (2,1,1)
+```{r Full Model ACF Plots}
+tsS01v1 %>% diff() %>%
+  ggtsdisplay(xlab="Index",
+    main="Var01")
+
+train %>% ur.kpss() %>% summary()
+ndiffs(tsS01v1)
+```
+
+```{r 211 ARIMA Model}
+(arima211 <- Arima(tsS01v1, order = c(2,1,1)))
+#2431.58
+```
+
+```{r 211 ARIMA Final Preds}
+arima211Preds <- arima211 %>% forecast(h = 140)
+write_csv(data.frame(arima211Preds$mean), "C:\\Users\\dcrai\\source\\repos\\DATA624\\Project 1\\S01Var01Final ARIMA211 Forecast.csv")
+
+arima211Preds
+```
+
+
+
+#Optional Cross Validation Testing
+
+
+
+
+#Other work that was done; most of this is just work space and doesn't need to be looked at
+```{r Auto ARIMA Full Dataset}
+fitAuto <- auto.arima(tsS01v1, stepwise=FALSE, approximation = FALSE)
+fitAuto #2428.77
+
+firArima312 <- Arima(tsS01v1, order = c(3,1,2))
+fitArima312 #2428.54
+
+
+
+fitAuto %>% forecast() %>% autoplot(include=40)
+
+checkresiduals(fitAuto, lag =50)
+
+```
+Auto ARIMA chose a (0,1,2) with drift model. Meaning a single difference, no seasonality, with the past 2 errors from the Moving Average model being accounted for. It has an AICc of 2428.4 which is very high.
+
+
+## Cross Validation
+|   Examples between the two. First we create functions that generate forecasts using the two methods. 
+```{r}
+fets <- function(x, h) {
+  forecast(ets(x), h = h)
+}
+farima <- function(x, h) {
+  forecast(auto.arima(x, stepwise = FALSE, approximation = FALSE), h=h)
+}
+```
+We then pass these functions to tsCV, sort of like using `optim()`. We will use the air data
+```{r}
+
+
+# Compute CV errors for ETS as e1
+e1 <- tsCV(tsS01v1, fets, h=1)
+# Compute CV errors for ARIMA as e2
+e2 <- tsCV(tsS01v1, farima, h=1)
+
+# Find MSE of each model class
+mean(e1^2, na.rm=TRUE)
+mean(e2^2, na.rm=TRUE)
+
+```
+Using Cross Validation, the ETS model tends to perform better with a .2658 MSE vs ARIMA's .2668.
+
+```{r}
+tsS01v1 %>% ets() %>% forecast(h=20) %>% autoplot()
+#fitAuto %>% forecast(h=20) %>% autoplot()
+
+```
+
+
+## train/test
+```{r Train Partition}
+
+max(tsS01v1$SeriesInd)
+
+42288 - 40669
+1619*.75
+40669 + 1214
+
+train <- ts(dataS01$Var01, start = min(dataS01$SeriesInd), frequency =1, end = 41883)
+```
+
+```{r Check Residuals}
+(fitArima <- auto.arima(train, stepwise=FALSE, approximation = FALSE))
+checkresiduals(fitArima)
+
+#ARIMA012 looks better on Ljung box but worse on ACF plot
+fitTrainARIMA012 <- Arima(train, order=c(0,1,2))
+checkresiduals(fitTrainARIMA012)
+
+fitArima311 <-Arima(tsS01v1,order=c(3,1,1))
+fitArima012 <- Arima(tsS01v1,order=c(0,1,2))
+
+checkresiduals(fitArima311)
+checkresiduals(fitArima012)
+checkresiduals(fitArima)
+```
+Here we see the Ljung-Box test passes with a p value of .11 and two observations that break the ACF significance line for autocorrelation.
+```{r}
+#Combination of every ETS model that can be used
+
+
+# etsModelANN <- ets(train, model = "ANN")
+# etsModelAAN <- ets(train, model = "AAN")
+# etsModelMNN <- ets(train, model = "MNN")
+# etsModelMAN <- ets(train, model = "MAN")
+# etsModelMMN <- ets(train, model = "MMN")
+# 
+# checkresiduals(etsModelANN)
+# checkresiduals(etsModelAAN)
+# checkresiduals(etsModelMNN) 
+# checkresiduals(etsModelMAN)
+# checkresiduals(etsModelMMN)
+
+
+```
+
+```{r ETS Testing}
+(etsModel <- ets(train, model = "MNN"))
+checkresiduals(etsModel)
+```
+This model definitely fails in comparison to the ARIMA model since it fails both the Ljung-Box test and just as many residuals break the ACF significance line.
+
+|   Below is comparing their performance on the test set:
+```{r Accuracy over Test Data}
+# Generate forecasts and compare accuracy over the test set
+
+#We set h = 4 *(2013 -2007)+1 to represent our testing data range we are comparing our predictions to
+a1 <- fitArima %>% forecast(h = (maxIn-41883)+1) %>%
+  forecast::accuracy(tsS01v1)
+
+a2 <- etsModel %>% forecast(h = (maxIn-41883)+1) %>%
+  forecast::accuracy(tsS01v1)
+
+##ARIMA012 barely loses to ARIMA311 on RMSE but out performs in MAE MAPE and MASE
+a3 <- fitTrainARIMA012 %>% forecast(h = (maxIn-41883)+1) %>%
+  forecast::accuracy(tsS01v1)
+
+a1[,c("RMSE","MAE","MAPE","MASE")]
+a2[,c("RMSE","MAE","MAPE","MASE")]
+a3[,c("RMSE","MAE","MAPE","MASE")]
+
+```
+It seems that the last model, ARIMA012, has the best performance across the four measures, we will use this one to predict with.
+
+
+```{r}
+#tsS01v1 %>% auto.arima(stepwise=FALSE, approximation = FALSE) %>% forecast(h=40) %>% autoplot()
+
+fitTrainARIMA012 %>% forecast(h = (maxIn-41883)+1) %>% autoplot()
+  #forecast::accuracy(tsS01v1)
+
+```
+```{r Prediction 140}
+tsS01v1%>%
+  Arima(order=c(0,1,2), lambda=0) %>%
+  forecast(h=140) %>% autoplot()
+```
+
+## Mean Data, No Log
+```{r No Log ACF PACF Plots}
+tsMeanS01v1 %>% diff() %>%
+  ggtsdisplay(xlab="Index",
+    main="Var01")
+
+tsMeanS01v1 %>% ur.kpss() %>% summary()
+ndiffs(tsS01v1)
+```
+
+Both of these ACF and PACF plots suggest the first two observations or errors should be included. This would indicate an ARIMA(0,1,2) or ARIMA(2,1,0) could be applicable.
+
+## Mean Data, Log Transform
+```{r Time Series Creation on Mean Data}
+#Avery Notes: 
+# mean is bad idea
+# impute the last observation
+# split difference between observations (linear interpolation/)
+# potentially "forecast" the missing data
+# Attempt 52 for frequncy seasonality checking (5, 250, 252, 52 *5 = 260)
+#                                               20
+#                                               60
+# Ensure that the last 140 forecasted periods aren't included inside the model
+# Double check whether skewness is relevant
+
+#Keith Notes:
+# Add Dummy variable for Day of Week; regression model for fun?
+
+dataS01
+
+mean <- mean(dataS01$Var01, na.rm = TRUE)
+
+dataMeanS01 <- dataS01
+
+dataMeanS01$Var01[is.na(dataS01$Var01)] <- mean
+
+dataMeanS01[,c('SeriesInd','Var01')]
+
+tsMeanS01v1 <- ts(dataMeanS01$Var01,
+              start = min(dataMeanS01$SeriesInd),
+              frequency = )
+
+
+#length(tsS01v1)
+
+#length(dataS01$Var01)
+
+#tsS01v1
+
+autoplot(tsMeanS01v1) + ylab("Var01") +xlab("SeriesIndex")
+```
+
+
+There are no outliers present by using Z Scores greater than 2.5
+```{r Check Outliers}
+zScores <- scale(tsMeanS01v1)
+outliers <- tsMeanS01v1[abs(zScores) > 2.5]
+outliers
+
+```
+
+Variance does not seem to be increasing in the model later with a low skewness score.
+```{r Apply Log}
+skewness(dataMeanS01$Var01)
+#max(dataMeanS01$Var01)/min(dataMeanS01$Var01)
+#BoxCoxTrans(dataMeanS01$Var01)
+
+#zoo package?
+#xts package
+
+
+ltsMeanS01v1 <- log(tsMeanS01v1)
+
+autoplot(ltsMeanS01v1) + ylab("Var01") +xlab("SeriesIndex")
+```
+We can clearly see the trend at work. There doesn't seem to be any seasonality. Attempts at checking this were made by creating dummy time variables and testing several different time periods for a seasonal effect. In short, nothing indicative of a seasonal effect was found.
+
+With that in mind, we can confirm the number of differences needed for the trends above.
+```{r Log Differences}
+ltsMeanS01v1 %>% ur.kpss() %>% summary()
+ndiffs(ltsS01v1)
+
+nsdiffs(ltsMeanS01v1)
+```
+
+With one difference and a log transformation, our time series now looks like this.
+```{r log ACF PACF Plots}
+ltsMeanS01v1 %>% diff() %>%
+  ggtsdisplay(xlab="Index",
+    main="Var01")
+
+tsMeanS01v1 %>% diff() %>%
+  ggtsdisplay(xlab="Index",
+    main="Log Var01")
+```
+
+Both the ACF and PACF plots have significant spikes at lag 1 and 2, with nearly significant spikes around lag 22 and 25, and lastly a significant spike at lag 31. This is indicative of an ARIMA(0,1,2) or ARIMA(2,1,0). Both will be tried for accuracy as well as a few other models.
+
+```{r}
+ltsMeanS01v1 %>%
+  Arima(order=c(0,1,2)) %>%
+  residuals() %>% ggtsdisplay()
+```
+The ACF plot shows significant spikes at 25 and 30. While the PACF shows spikes are 23, 25, and 31.
+
+```{r Seasonal Attempts}
+ltsMeanS01v1 %>%
+  Arima(order = c(0, 0, 0), seasonal = list(order = c(0, 0, 0), period = 2)) %>%
+  residuals() %>% ggtsdisplay()
+```
+```{r All Models}
+
+library(forecast)
+
+#SARIMAs(0,0,0) 2 - 12 have great AICc
+
+ltsMeanS01v1
+
+
+
+testAllPossibleArimaModels <- function(data) {
+  # Create a list to store the models and their names
+  models <- list()
+
+  # Iterate through all combinations of p, d, q values for non-seasonal models
+  for (p in 0:2) {
+    for (d in 0:1) {
+      for (q in 0:2) {
+        # Skip the (0,0,0) model
+        if (p == 0 && d == 0 && q == 0) {
+          next
+        }
+        
+        # Fit the ARIMA model
+        model <- tryCatch({
+          arimaModel <- Arima(data, order = c(p, d, q), include.mean = TRUE)
+          modelName <- paste0("ARIMA(", p, ",", d, ",", q, ")")
+          models[[modelName]] <- arimaModel
+        }, error = function(e) {
+          NULL
+        })
+      }
+    }
+  }
+
+  # Iterate through all possible combinations of P, D, Q, m values for seasonal models
+  for (P in 0:2) {
+    for (D in 0:1) {
+      for (Q in 0:2) {
+        for (m in 1:12) {
+          # Skip the (0,0,0)(0,0,0)[1]
+          if (P == 0 && D == 0 && Q == 0 && m == 1) { #skip
+            next
+          }
+
+          # seasonal ARIMA model
+          model <- tryCatch({
+            sarimaModel <- Arima(data, order = c(0, 0, 0), seasonal = list(order = c(P, D, Q), period = m), include.mean = TRUE)
+            modelName <- paste0("SARIMA(", P, ",", D, ",", Q, ")[", m, "]") #make names pretty
+            models[[model_name]] <- sarimaModel
+          }, error = function(e) {
+            NULL
+          })
+        }
+      }
+    }
+  }
+
+  # Return the list of models
+  return(models)
+}
+
+testAllPossibleArimaModels(tsS01v1)
+
+
+
+```
+
+
+
+`auto.arima` below suggests an ARIMA(3,1,2) model with an ICc of -9483, which is quite large. But is only barely outperformed by our ARIMA(0,1,2) model at -9478.37.
+
+
+
+```{r autoArima}
+ltsMeanS01v1 %>%
+  auto.arima(approximation = FALSE, stepwise = FALSE) %>%
+  residuals() %>% ggtsdisplay()
+
+
+
+AIC=-9478.39   AICc=-9478.37
+
+```
+
+Below we tested every possible non-seasonal arima model and found that the (0,0,2) and (0,0,1) models performed the best.
+We will attempt testing ARIMA(3,1,2), (0,1,2), (0,0,2), and (0,0,1)
+```{r Bunch of Arima Test}
+
+arima210 <- ltsMeanS01v1 %>%
+  Arima(order=c(2,1,0))
+
+library(forecast)
+
+library(forecast)
+
+testNonSeasonalArima <- function(data) {
+  #Instantiate a list
+  models <- list()
+
+  # Iterate through each of the potential values for p,d,q
+  for (p in 0:2) {
+    for (d in 0:1) {
+      for (q in 0:2) {
+        # Skip the (0,0,0) model as it is equivalent to the mean
+        if (p == 0 && d == 0 && q == 0) {
+          next
+        }
+        
+        # Fit the ARIMA models
+        model <- tryCatch({
+          arimaModel <- Arima(data, order = c(p, d, q), include.mean = TRUE)
+          modelName <- paste0("ARIMA(", p, ",", d, ",", q, ")")
+          models[[modelName]] <- arimaModel
+        }, error = function(e) {
+          NULL
+        })
+      }
+    }
+  }
+
+  # Return the list of models
+  return(models)
+}
+
+
+
+testNonSeasonalArima(ltsMeanS01v1)
+
+
+```
+## Naive and Random Walk Models
+```{r}
+#Average Method
+meanf(ltsMeanS01v1)
+
+#Naive Methods - set to last observed value
+naive(ltsMeanS01v1)
+
+
+
+
+```
+
+
+```{r Train Partition}
+max(tsS01v1$SeriesInd)
+
+42288 - 40669
+1619*.75
+40669 + 1214
+
+train <- ts(dataS01$Var01, start = min(dataS01$SeriesInd), frequency =1, end = 41883)
+```
+
+
+
+
+
+
+## Train Test Partition
+
+```{r}
+#train %>% Chooses 3,1,1 model
+  #Arima(order = c(0, 0, 0), seasonal = list(order = c(0, 0, 0), period = 2))
+
+(fitArima <- auto.arima(train, stepwise=FALSE, approximation = FALSE))
+checkresiduals(fitArima)
+
+#ARIMA012 looks better on Ljung box but worse on ACF plot
+fitTrainARIMA012 <- Arima(train, order=c(0,1,2))
+checkresiduals(fitTrainARIMA012)
+
+fitTrainARIMA312 <- Arima(train, order=c(3,1,2))
+checkresiduals(fitTrainARIMA012)
+
+# fitArima312 <-Arima(train,order=c(3,1,2))
+# fitArima012 <- Arima(train,order=c(0,1,2))
+# 
+# checkresiduals(fitArima311)
+# checkresiduals(fitArima012)
+# checkresiduals(fitArima)
+```
+
+
+```{r}
+# Generate forecasts and compare accuracy over the test set
+
+#We set h = 4 *(2013 -2007)+1 to represent our testing data range we are comparing our predictions to
+a1 <- fitTrainARIMA012 %>% forecast(h = (maxIn-40669)+1) %>%
+  forecast::accuracy(ltsS01v1)
+
+a2 <- etsModel %>% forecast(h = (maxIn-40669)+1) %>%
+  forecast::accuracy(ltsS01v1)
+
+##ARIMA012 barely loses to ARIMA311 on RMSE but out performs in MAE MAPE and MASE
+a3 <- fitTrainARIMA312 %>% forecast(h = (maxIn-41883)+1) %>%
+  forecast::accuracy(ltsS01v1)
+
+a1[,c("RMSE","MAE","MAPE","MASE")]
+a2[,c("RMSE","MAE","MAPE","MASE")]
+a3[,c("RMSE","MAE","MAPE","MASE")]
+```
+
+
+## Seasonal Stuff Ghetto Checking
+```{r}
+#for every 100 indexes, there seems to be 4 cycles
+
+
+#I tried creating dates, assigning it to the timeSeries and then using nsdiffs to check for seasonality, daily, weekly, monthly, quarterly, bi-yearly
+
+timestamps <- seq(from = as.Date("2000-01-01"), length.out = length(dataS01$SeriesInd), by = "1 monthly")
+
+timestamps[1]
+timestamps[100]
+
+seasonalS01v1 <- cbind(timestamps,dataS01)
+
+tsSeasonalS01v1 <- ts(sS01v1[,c('Var01')], 
+            frequency = 10, 
+            start= sS01v1$timestamps
+            )
+
+
+
+nsdiffs(tsSeasonalS01v1)
+
+
+```
+

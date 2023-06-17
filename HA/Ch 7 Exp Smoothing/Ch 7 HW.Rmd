@@ -1,0 +1,132 @@
+---
+title: "Ch 7 HW"
+author: "Daniel Craig"
+date: "2023-06-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(fpp2)
+library(tidyverse)
+library(forecast)
+```
+7.1: Consider the pigs series — the number of pigs slaughtered in Victoria each month.
+
+a. Use the ses() function in R to find the optimal values of $\alpha$ and $l_0$, and generate forecasts for the next four months
+
+From using `ses()`, we can see that for a simple exponential smoothing model our $\alpha$ should be .2971 and our $l_0$ should be 77260.0561
+```{r}
+#h will tell our SES model how far into the future we want to model
+fc <- ses(pigs, h =4)
+
+fc$model
+
+fc
+```
+
+
+b. Compute a 95% prediction interval for the first forecast using $\hat{y} \pm 1.96s$ where s is the standard deviation of the residuals. Compare your interval with he interval produced by R
+
+The Prediction Interval using $\hat{y} \pm 1.96s$ is slightly smaller than the forecast's 95% Prediction Interval
+
+```{r}
+moe <- sd(residuals(fc))*1.96
+
+#sd(fc$residuals)  this is equivalent to sd(residuals(fc))
+
+High <- round((fc$mean[1]+moe),2)
+Low <- round((fc$mean[1]-moe),2)
+
+paste('Manually calculated 95% P.I. for 1995 Sep :',Low,'-',High)
+paste('Forecast Calculated 95% P.I. for 1995 Sep :',round(fc$lower[5],2),'-',round(fc$upper[5],2))
+paste("Difference in Bounds is",Low-round(fc$lower[5],2),"and",High-round(fc$upper[5],2))
+
+```
+
+
+7.2: Write your own function to implement simple exponential smoothing. The function should take arguments `y` (the time series), `alpha` (the smoothing paramter), and `level`(the initial level $l_0$). It should return the forecast of the next observation in the series. Does it give the same forecast as ses()?
+
+|   It does. It took a while to figure it out, but the key was to remember the level passed to the hand-made function needed to be iterated over to update itself for the number of observations in the forecast you pass it (labeled as variable y in the function definition). The original issue was attempting to use the initial level as the level for the current observation. 
+
+
+```{r}
+handses <- function(y,alpha,level){
+  
+  curObs <- length(y)
+  forecast <- y[curObs]
+  
+  for (i in 1:curObs) {
+    level <- alpha*y[i] + (1-alpha)*(level)
+    forecast <- level
+  }
+  
+  return(forecast)
+}
+
+
+sesFC <- ses(pigs)
+
+alpha <- sesFC$model$par[1]
+level <- sesFC$model$par[2]
+#alpha <- .2971
+#level <- 77260.0561
+
+
+
+handses(pigs,alpha,level)
+
+ses(pigs)
+
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\HA\\Ch 7 Exp Smoothing\\SES Component Form.png")
+```
+
+
+7.3: Modify your function from the previous exercise to return the SSE rather than the forecast of the next observation. Then use the `optim()` function to find the optimal values of $\alpha$ and $l_0$. Do you get the same values as the `ses()` function?
+```{r}
+#Modified code for only returning SSE
+handSSE <- function(y,alpha,level){
+  
+  curObs <- length(y)
+  se<-numeric(curObs)
+  
+  for (i in 1:curObs) {
+    se[i] <- (level - y[i])^2
+    level <- alpha*y[i] + (1-alpha)*(level)
+    #forecast <- level
+  }
+  SSE <- sum(se)
+  return(SSE)
+}
+
+#alpha <- .2971
+#level <- 77260.0561
+
+sseHand <- handSSE(pigs,alpha,level)
+
+
+fc<-ses(pigs)
+pointForecasts <- fitted(fc)
+
+sseFC <- sum((pigs - pointForecasts)^2)
+paste("Hand SES SSE:", round(sseHand,2))
+paste("     SES SSE:",round(sseFC,2))
+paste("Difference in Hand SSE and SES SSE:", round(sseHand - sseFC,2))
+
+```
+
+```{r}
+##Putting this in another function since optim() can't take anything but numeric inputs and pigs would break it
+params <- c(.5,50000) #Setting incorrect initial parameters for optim to start with
+optFunc <- function(params) {
+  alpha <- params[1]
+  l0 <- params[2]
+  sse <- handSSE(pigs, alpha, l0)
+  return(sse)
+}
+
+opt <- optim(params, optFunc)
+paste("The optimal values for alpha and l_0, respectively, are:", round(opt$par[1],4),"and",round(opt$par[2],2))
+paste("The values ses() provided for alpha and l_0, respectively, are:", round(sesFC$model$par[1],4),"and",round(sesFC$model$par[2],2))
+```
+I receive nearly the same values as the `ses()` function does.

@@ -1,0 +1,217 @@
+---
+title: "CH3 HW DATA624"
+author: "Daniel Craig"
+date: "2023-06-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(gridExtra)
+library(cowplot)
+library(purrr)
+library(corrplot)
+library(knitr)
+library(caret)
+library(tidyverse)
+library(missForest)
+```
+
+## 3.1
+<br>  
+The UC Irvine Machine Learning Repository contains a data set related  to glass identification. The data consist of 214 glass samples labeled as one  of seven class categories. There are nine predictors, including the refractive  index and percentages of eight elements: Na, Mg, Al, Si, K, Ca, Ba, and Fe. 
+```{r}
+library(mlbench)
+data(Glass)
+str(Glass)
+```
+
+**A.** Using visualizations, explore the predictor variables to understand their distributions as well as the relationships between predictors
+
+```{r}
+#Create a histogram function to pass each of our variables to
+histPlot <- function(var) {
+
+  g <- ggplot(data = Glass, aes_string(x = var)) + geom_histogram() + ggtitle(var)
+
+  return(g)
+}
+
+#Use map from purrr to apply our histogram function over each variable in glass
+histList <- map(names(Glass[,-10]), histPlot)
+
+plot_grid(plotlist = histList)
+
+```
+|   Checking the distributions, here are some notes for each predictor:
+* RI: Right skewed with two potential outliers
+* Na: Looks fairly normal in comparison to others, perhaps one outlier
+* Mg: Bimodal, potentially an underlying reason for the values seen at 0, left skew
+* Al:Fairly normal, right skewed
+* Si: Fiarly normal
+* K: Strange distribution, observations centered near 0 this could be a potential near zero variance
+* Ca: Fairly normal, left skewed
+* Ba: Another candidate for near zero variance
+* Fe: Similar to Ba, could be near zero variance or right skewed
+
+```{r}
+corrs <- cor(Glass[,-10])
+dim(corrs)
+
+
+corrplot(corrs, order = "hclust")
+
+RI <- corrs[1, corrs[1,] > .2 & corrs[1,]< -.2]
+Na <- corrs[2, corrs[2,] > .2 | corrs[2,]< -.2]
+Mg <- corrs[3, corrs[3,] > .2 | corrs[3,]< -.2]
+Al <- corrs[4, corrs[4,] > .2 | corrs[4,]< -.2]
+Si <- corrs[5, corrs[5,] > .2 | corrs[5,]< -.2]
+K <- corrs[6, corrs[6,] > .2 | corrs[6,]< -.2]
+Ca <- corrs[7, corrs[7,] > .2 | corrs[7,]< -.2]
+Ba <- corrs[8, corrs[8,] > .2 | corrs[8,]< -.2]
+Fe <- corrs[9, corrs[9,] > .2 | corrs[9,]< -.2]
+
+corrList <- list(RI, Na, Mg, Al, Si, K, Ca, Ba, Fe)
+```
+|   Checking the correlation plot, here are notes highlighting any correlation breaching .2 or -.2 for each predictor. Note that RI had a correlation with itself of .2, it is the first item in the below list. All others can be identified by the correlation to itself at 1.0:
+```{r}
+corrList
+```
+
+
+**B.** Do there appear to be any outliers in the data? Are any predictors skewed?
+|   There do seem to be outliers in the data from observing the histogram. We can also view these under a boxplot or use a z-score > 2 or 3 if needed. A transformation to spatial sign may also be useful.
+|   The following are each predictors' skewness. With the skewness package, anything with an absolute value greater than 1 (|1|) is considered heavily skewed. Using this benchmark, RI, Mg, K, Ca, Ba, and Fe are all skewed.
+```{r}
+library(e1071)
+glassNoType <- Glass[,-10]
+skewVals <- apply(glassNoType,2,skewness)
+print(skewVals)
+```
+
+
+**C.** Are there any relevant transformations of one or more predictors that might improve the classification model?
+|   The BoxCox family transformation would be useful to handle the skewness in some of our predictors. Center and scaling is also useful since the elements have different amounts that are present in the glass.
+<br>
+To handle Skewness, we will use the BoxCox family of transformation on any predictor with a skewness breaching our benchmark of |1|. These would be RI, Mg, K, Ca, Ba, and Fe with an example of a new histogram of RI in comparison. It is marginally better than before though.
+```{r}
+transRI <- BoxCoxTrans(glassNoType$RI)
+
+
+transRIVal <- predict(transRI, glassNoType$RI)
+
+t <- ggplot(data.frame(x = transRIVal), aes(x)) +
+  geom_histogram() +
+  labs(x = "Transformed RI", y = "Frequency") +
+  ggtitle("Histogram of Transformed Data")
+
+r <- ggplot(data = Glass, aes(x = RI)) + geom_histogram() + ggtitle(RI)
+
+plot_grid(plotlist = list(t,r))
+
+```
+There are no missing data to impute, and to continue our transformations we would want to center, scale, and then perform a spatial sign for the predictors that have outliers.
+```{r}
+Glass[is.na(Glass),]
+
+trans <- preProcess(Glass, method = c("BoxCox", "center", "scale"))
+
+head(spatialSign(Glass[,-10]))
+```
+
+## 3.2
+|   The soybean data can also be found at the UC Irvine Machine Learning  Repository. Data were collected to predict disease in 683 soybeans. The 35  predictors are mostly categorical and include information on the environmental conditions (e.g., temperature, precipitation) and plant conditions (e.g., left spots, mold growth). The outcome labels consist of 19 distinct classes.
+
+#### A.
+|   Investigate the frequency distributions for the categorical predictors. Are  any of the distributions degenerate in the ways discussed earlier in this chapter?  
+
+```{r}
+data(Soybean)
+Soybean
+
+
+#Create a histogram function to pass each of our variables to
+histSoyPlot <- function(var) {
+
+  g <- ggplot(data = Soybean, aes_string(x = var)) + geom_bar() + ggtitle(var)
+
+  return(g)
+}
+
+#Use map from purrr to apply our histogram function over each variable in glass
+barSoyList1 <- map(names(Soybean[,2:13]), histSoyPlot)
+barSoyList2 <- map(names(Soybean[,14:25]), histSoyPlot)
+barSoyList3 <- map(names(Soybean[,26:35]), histSoyPlot)
+
+plot_grid(plotlist = barSoyList1)
+plot_grid(plotlist = barSoyList2)
+plot_grid(plotlist = barSoyList3)
+
+```
+|   Since these are categorical predictors, they are prone to near zero variance. From looking at the plots, the predictors that fall into this category are quite a few. Any distribution that shows a majority in one category and few or none in the others are suspects. We can check this with nearZeroVar() from *caret*.
+
+```{r}
+nearZeroVar(Soybean)
+
+names(Soybean[,c(19,26,28)])
+```
+
+Using nearZeroVar(), the columns with near zero variance are leaf.mild, mycelium, and sclerotia. If we were to continue analysis, we would most likely remove these from a predictive model. What nearZeroVar() checks for is a fraction of unique values over the sample size is 10% or less and the ratio of the frequency of the most prevalent value to the frequency of the 2nd most is large (around 20).
+
+
+#### B.
+|   Roughly 18% of the data are missing. Are there particular predictors that are more likely to be missing? Is the pattern of missing data related to  the classes?
+
+|   Looking at the below results, hail, sever, seed.tmt, and lodging have the highest ratio of NA values at 18% each. Due to this, it certainly suggests that some predictors are more likely to contain missing values than others. If the missing values were related to observations, and not predictors, we would see roughly even ratio's across all predictors.
+
+```{r}
+naRatio <- round(apply(Soybean, 2, function(x) mean(is.na(x))), 2)
+sort(naRatio, decreasing = TRUE)
+```
+
+#### C.
+|   Develop a strategy for handling missing data, either by eliminating  predictors or imputation.
+
+|   After reading the context and notes from the dataset available via `?Soybean`, there were no comments mentioning structurally induced missing values or censored data where the researchers could only detect measurements above a certain value. It is clear that certain classes of plant damage do have more missing NA values and that certain predictor variables contain more than others. For a strategy, the following steps are recommended:
+1. Check correlation and potential significance of each variable with regression techniques or other models
+2. Identify which variables are insignificant and missing many NAs
+3. Test the model after removing those predictors
+4. Test the model after imputing for those predictors
+5. Compare accuracy between both models
+
+```{r}
+naCounts <- apply(Soybean, 2, function(x) sum(is.na(x)))
+naCounts <- naCounts[order(naCounts, decreasing = TRUE)]
+naCounts
+```
+
+```{r}
+countNAbyCat <- function(dataset, filterColumn) {
+  
+  #Create our list of values we want to filter our dataset for
+  filterValues <- unique(dataset[[filterColumn]])
+  
+  #Use map to filter, check NAs, and count NAs for each value in our filterValues list
+  resultList <- map(filterValues, function(value) {
+    naCount <- dataset %>%
+      filter(!!sym(filterColumn) == value) %>% 
+      ##!!sym tells R to interpret filterColumn's value as syntax in code
+      is.na() %>%
+      sum()
+    
+    #Create a dataframe and assign it to 'resultFrame' from the value used to filter our dataset and the            resulting naCount
+    data.frame(Category = value, naCount = naCount)
+  })
+  
+  resultFrame <- do.call(rbind, resultList)
+
+  return(arrange(resultFrame, desc(naCount)))
+}
+
+filterColumn <- "Class"
+resultFrame <- countNAbyCat(Soybean, filterColumn)
+resultFrame
+```
+
+
