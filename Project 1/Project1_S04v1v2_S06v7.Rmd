@@ -1,0 +1,172 @@
+---
+title: "Project 1"
+author: "Avery Davidowitz"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+## Import
+```{r}
+library(fpp2)
+library(tidyverse)
+library(forecast)
+library(imputeTS)
+library(magrittr)
+library(tsfeatures)
+```
+
+## Data Wrangling
+
+```{r}
+df <- readr::read_csv("DataSetforClass.csv")
+```
+
+
+```{r}
+summary(df)
+s4v1 <- df |> dplyr::filter(category=="S04")|>
+        dplyr::select(Var01)
+s4v1 %<>% ts()
+s4v1 <- s4v1[1:(length(s4v1)-140)] #Remove the last 140 records to be forecast
+s4v1 %<>% ts(frequency = 5)
+summary(s4v1)
+ggplot2::autoplot(s4v1)
+
+s4v2 <- df |> dplyr::filter(category=="S04")|>
+        dplyr::select(Var02)
+s4v2 %<>% ts()
+s4v2 <- s4v2[1:(length(s4v2)-140)]
+s4v2 %<>% ts(frequency = 5)
+s4v2_lambda <- BoxCox.lambda(s4v2)
+#s4v2 <- forecast::BoxCox(s4v2, s4v2_lambda)
+summary(s4v2)
+ggplot2::autoplot(s4v2)
+
+s6v7 <- df |> dplyr::filter(category=="S06")|>
+        dplyr::select(Var07)
+s6v7 %<>% ts()
+s6v7 <- s6v7[1:(length(s6v7)-140)]
+s6v7 %<>% ts(frequency = 260)
+summary(s6v7)
+ggplot2::autoplot(s6v7)
+```
+
+Impute the missing values
+```{r}
+ggplot_na_distribution(s4v1)
+ggplot_na_distribution(s6v7)
+ggplot_na_gapsize(s4v1)
+ggplot_na_gapsize(s6v7)
+
+na_indices_v1 <- which(is.na(s4v1))
+na_indices_v7 <- which(is.na(s6v7))
+#confirms 20 previous data points to generate imputations with for each missing value
+
+s4v1_interp <- na_interpolation(s4v1)
+s6v7_interp <- na_interpolation(s6v7)
+
+```
+## Seasonality
+```{r}
+s4v1_interp_decomposed <- stl(s4v1_interp, s.window = "periodic")
+plot(s4v1_interp_decomposed)
+
+s4v2_decomposed <- stl(s4v2, s.window = "periodic")
+plot(s4v2_decomposed)
+
+s6v7_interp_decomposed <- stl(s6v7_interp, s.window = "periodic")
+plot(s6v7_interp_decomposed)
+```
+```{r}
+stl_features(s4v1_interp)
+stl_features(s4v2)
+stl_features(s6v7_interp)
+```
+
+## Partition Train and Test
+```{r}
+predict_h <- length(s4v2) - round(length(s4v2)*.7)
+end_inter <- round(length(s4v2)*.7)
+
+s4v2_train <- subset(s4v2, end = end_inter)
+
+s4v1_interp_train <- subset(s4v1_interp, end = end_inter)
+s6v7_interp_train <- subset(s6v7_interp, end = end_inter)
+
+```
+
+## Forecast s4v2
+```{r}
+forc_s4v2_ets <- forecast(s4v2_train, h=predict_h, lambda=s4v2_lambda)
+forc_s4v2_naive <- naive(s4v2_train, h=predict_h, lambda=s4v2_lambda)
+
+forc_s4v2_arima <- forecast(auto.arima(s4v2_train, seasonal = FALSE, stepwise=FALSE, approximation=FALSE), h=predict_h, lambda=s4v2_lambda)
+forc_s4v2_avg <- meanf(s4v2_train, h=predict_h, lambda=s4v2_lambda)
+
+checkresiduals(forc_s4v2_ets)
+checkresiduals(forc_s4v2_naive)
+checkresiduals(forc_s4v2_arima)
+checkresiduals(forc_s4v2_avg)
+
+forc_s4v2_naive %>%  accuracy(s4v2)
+forc_s4v2_ets %>%  accuracy(s4v2)
+forc_s4v2_arima %>%  accuracy(s4v2)
+forc_s4v2_avg %>%  accuracy(s4v2)
+```
+
+
+## Forecast s4v1
+```{r}
+forc_s4v1_interp_ets <- forecast(s4v1_interp_train, h=predict_h)
+forc_s4v1_interp_naive <- naive(s4v1_interp_train, h=predict_h)
+
+forc_s4v1_interp_arima <- forecast(auto.arima(s4v1_interp_train, seasonal = FALSE, stepwise=FALSE, approximation=FALSE), h=predict_h)
+forc_s4v1_interp_avg <- meanf(s4v1_interp_train, h=predict_h)
+
+checkresiduals(forc_s4v1_interp_ets)
+checkresiduals(forc_s4v1_interp_naive)
+checkresiduals(forc_s4v1_interp_arima)
+checkresiduals(forc_s4v1_interp_avg)
+
+forc_s4v1_interp_naive %>%  accuracy(s4v1_interp)
+forc_s4v1_interp_ets %>%  accuracy(s4v1_interp)
+forc_s4v1_interp_arima %>%  accuracy(s4v1_interp)
+forc_s4v1_interp_avg %>%  accuracy(s4v1_interp)
+```
+
+## Forecast s6v7
+```{r}
+forc_s6v7_interp_ets <- forecast(s6v7_interp_train, h=predict_h)
+forc_s6v7_interp_naive <- naive(s6v7_interp_train, h=predict_h)
+forc_s6v7_interp_arima <- forecast(auto.arima(s6v7_interp_train, seasonal = FALSE, stepwise=FALSE, approximation=FALSE), h=predict_h)
+forc_s6v7_interp_avg <- meanf(s6v7_interp_train, h=predict_h)
+
+checkresiduals(forc_s6v7_interp_ets)
+checkresiduals(forc_s6v7_interp_naive)
+checkresiduals(forc_s6v7_interp_arima)
+checkresiduals(forc_s6v7_interp_avg)
+
+forc_s6v7_interp_naive %>%  accuracy(s6v7_interp)
+forc_s6v7_interp_ets %>%  accuracy(s6v7_interp)
+forc_s6v7_interp_arima %>%  accuracy(s6v7_interp)
+forc_s6v7_interp_avg %>%  accuracy(s6v7_interp)
+```
+
+## Optimal Forecasts
+```{r}
+forcast_s4v1_final <- s4v1_interp %>% ets() %>% forecast(h=140)
+forcast_s4v1_final$mean
+```
+```{r}
+forcast_s6v7_final <- s6v7_interp %>% naive(h=140)
+forcast_s6v7_final$mean
+```
+```{r}
+forcast_s4v2_final  <- s4v2 %>% ets() %>% forecast(h=140)
+forcast_s4v2_final$mean
+```
+
