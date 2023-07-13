@@ -20,11 +20,14 @@ library(tidyverse)
 library(readr)
 library(e1071)
 library(urca) #for ur.kpss()
+library(caret)
 
 
-#data <- read_csv("C:\\Users\\dcrai\\source\\repos\\DATA624\\Project 1\\Data Set for Class.csv")
+data <- read_csv("C:\\Users\\dcrai\\source\\repos\\DATA624\\Project 1\\Data Set for Class.csv")
 
-seasonData <- read_csv("C:\\Users\\dcrai\\source\\repos\\DATA624\\Project 1\\seasonData Set for Class.csv")
+#Important to note about this is that I transformed my data before creating the time series, unlike last time where I transformed after. This caused some issues in performing predictions since I needed to adjust accuracy
+
+#seasonData <- read_csv("C:\\Users\\dcrai\\source\\repos\\DATA624\\Project 1\\seasonData Set for Class.csv")
 
 dataS05v2 <- data %>% filter(category == 'S05') %>% select(SeriesInd, category,Var02)
 
@@ -48,6 +51,7 @@ dataS05v2[790:800,]
 dataS05v2 <- dataS05v2[-c(1623:1762),]
 
 #Skewness
+library(forecast)
 skewness(dataS05v2$Var02)
 max(dataS05v2$Var02)/min(dataS05v2$Var02) # Shows atleast outliers
 transResult <- BoxCoxTrans(dataS05v2$Var02) #Confirms a type of transformation via BoxCox is due
@@ -206,11 +210,16 @@ checkresiduals(trainAuto80, lag =50)
 ```
 Both MAPE's turned out pretty well with .015 on the 113 80% trained and the .023 for 70% split.
 ```{r Accuracy Check}
-(accTrain70 <- trainAuto70 %>% forecast(h = val70Pred) %>%
+(accTrain70 <- trainAuto70 %>% forecast(h = valsToPredict70) %>%
   forecast::accuracy(tsS05v2))
 #MAPE of 2.312 on testing, we want something close to 0. Can go up to 100
 
-(accTrain80 <- trainAuto80 %>% forecast(h = val80Pred) %>%
+
+trans70Preds <- trainAuto70 %>% forecast(h = valsToPredict70)
+reverted70Preds <- InvBoxCox(trans70Preds$mean, lambda)
+(mape <- accuracy(reverted70Preds, tsS05v2)[, "MAPE"])
+
+(accTrain80 <- trainAuto80 %>% forecast(h = valsToPredict80) %>%
   forecast::accuracy(tsS05v2))
 ```
 
@@ -265,6 +274,12 @@ etsANNPreds <- etsANN %>% forecast(h = 140)
 
 #Note we need to inverse our box cox trans 
 write_csv(data.frame(InvBoxCox(etsANNPreds$mean, lambda)), "C:\\Users\\dcrai\\source\\repos\\DATA624\\Project 1\\S05Var02Final etsANN Forecast.csv")
+
+```
+
+Naive Predictions
+```{r}
+
 
 ```
 

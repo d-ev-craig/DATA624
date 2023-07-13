@@ -12,7 +12,8 @@ library(forecast)
 ```
 
 # ARIMA Models
-
+You do not need to back transform after making prediction if you pass lambda to the Arima model
+https://stats.stackexchange.com/questions/572400/inverse-differencing-and-inverse-box-cox-on-forecasted-arima-predictions
 
 ## Stationarity
 |   *Stationary Time Series*: A time series whose propertied do not depend on the time at which the series is observed.

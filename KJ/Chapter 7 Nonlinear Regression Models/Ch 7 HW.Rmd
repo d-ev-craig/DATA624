@@ -1,0 +1,327 @@
+---
+title: "Ch7 HW"
+author: "Daniel Craig"
+date: "2023-06-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 7.2 
+Friedman (1991) introduced several benchmark data sets create by simulation. One of these simulations used the following nonlinear equation to  create data:  y = 10 sin(πx1x2) + 20(x3 − 0.5)2 + 10x4 + 5x5 + N(0, σ2)  where the x values are random variables uniformly distributed between [0, 1]  (there are also 5 other non-informative variables also created in the simulation). The package mlbench contains a function called mlbench.friedman1 that simulates these data:
+
+$$y = 10sin(\pi x_1 x_2) + 20(x_3 - 0.5)^2 + 10x_4 + 5x_5 + N(0, \sigma^2)$$
+
+
+```{r}
+library(mlbench)
+library(caret)
+
+#Creating dataset like book
+set.seed(200)
+trainingData <- mlbench.friedman1(200, sd = 1) 
+
+testData <- mlbench.friedman1(5000, sd = 1)
+testData$x <- data.frame(testData$x)
+testData$y <- data.frame(testData$y)
+testingData <- data.frame(testData$x,testData$y)
+colnames(testingData)[11] <- "y"
+
+trainingData$x <- data.frame(trainingData$x) ##convert matrix to a data frame to give the columns names
+trainingData$y <- data.frame(trainingData$y)
+#featurePlot(trainingData$x, trainingData$y)
+
+trainingData <- data.frame(trainingData$x,trainingData$y)
+colnames(trainingData)[11] <- "y"
+
+
+#No partitioning since we were given a full train and test set
+
+#Transform, Center, Scale
+preProcValues <- preProcess(trainingData,
+                                method=c("BoxCox", "center", "scale"))
+
+# We don't transform the testing data separately, since we want to transform both sets of data using the same values, we choose to transform based off the training data, so below two lines are unnecessary
+# preProcValues2 <- preProcess(testingData, 
+#                                method = c("BoxCox","center","scale"))
+
+trainTransformed <- predict(preProcValues, trainingData)
+testTransformed <- predict(preProcValues, testingData)
+
+#Check for zero variance and multicol
+nearZeroVars <- nearZeroVar(trainTransformed) #No nzv's
+multiCol <- findCorrelation(cor(testTransformed)) #No mcl
+
+#Our training dataframe
+trainingData <- data.frame(trainTransformed)
+
+#Separate testing x and y for ease
+testData <- data.frame(testTransformed)
+```
+Tune several models on these data. Which models appear to give the best performance? Does MARS select the  informative predictors (those named X1–X5)?
+
+
+
+### MARS
+
+```{r}
+ #Define the candidate models to test with options from earth package
+marsGrid <- expand.grid(.degree = 1:2, .nprune = 2:38)
+set.seed(100)   #Fix the seed so that the results can be reproduced
+marsTuned <- train(trainingData[,-11], trainingData[,11],  
+                    method = "earth",  
+                    tuneGrid = marsGrid,  #Explicitly declare the candidate models to test  
+                    trControl = trainControl(method = "cv")
+                   ) 
+
+#Test set performance
+marsPreds <- predict(marsTuned, newdata = testData[,-11])
+
+postResample(pred = marsPreds, obs = testData[,11])
+
+marsTuned$finalModel
+
+varImp(marsTuned)
+
+```
+
+
+### SVM
+```{r}
+svmRTuned <- train(trainingData[,-11], trainingData[,11],
+                   method = "svmRadial",
+                   preProc = c("center", "scale"),
+                   tuneLength = 14,
+                   trControl = trainControl(method = "cv")
+                   ) 
+svmRTuned$bestTune
+
+print(paste0("RMSE: ",round(min(svmRTuned$results$RMSE),2)))
+print(paste0("Rsq: ",round(min(svmRTuned$results$Rsquared),2)))
+print(paste0("MAE: ",round(min(svmRTuned$results$MAE),2)))
+svmRTuned$finalModel
+
+
+
+#Test set performance
+svmRPreds <- predict(svmRTuned, newdata = testData[,-11])
+
+postResample(pred = svmRPreds, obs = testData[,11])
+```
+
+
+### KNN
+```{r}
+library(caret)
+knnModel <- train( trainingData[,-11], trainingData[,11],
+                   method = "knn",
+                   preProc = c("center","scale"),
+                   tuneLength =10)
+
+
+
+knnPred <- predict(knnModel, newdata = testData[,-11])
+
+#postResample gets test set performance values
+postResample(pred = knnPred, obs = testData[,11])
+```
+
+
+### Neural Net
+```{r}
+ctrl <- trainControl(method = "cv", number = 10)
+
+##The findCorrelation takes a correlation matrix and determines the 
+##column numbers that should be removed to keep all pair-wise correlations below a threshold
+(tooHigh <- findCorrelation(cor(trainingData[,-11]), cutoff = .75)) #none were found too high
+
+
+##Create a specific candidate set of models to evaluate:
+nnetGrid <- expand.grid(  .decay = c(0, 0.01, .1), 
+                          .size = c(1:10),  
+                          .bag = FALSE) #option is to use bagging instead of different random seeds.  
+set.seed(100) 
+nnetTune <- train(trainingData[,-11], trainingData[,11],
+                  method = "avNNet",  
+                  tuneGrid = nnetGrid,  
+                  trControl = ctrl,
+                  linout = TRUE, trace = FALSE, 
+                  MaxNWts = 10 * (ncol(trainingData[,-11]) + 1) + 10 + 1, maxit = 500)
+
+
+
+nnPreds <- predict(nnetTune, newData = testData[,-11])
+
+postResample(pred = nnPreds, obs = testData[,11])
+```
+
+Looks like MARS predicted best with the best scores across the board. MARS places importance on variales 1,2,4, and 5, although weakly on 5.
+
+
+## 7.5. 
+Exercise 6.3 describes data for a chemical manufacturing process. Use  the same data imputation, data splitting, and pre-processing steps as before  and train several nonlinear regression models.  
+
+```{r 7.5 Data Prep}
+library(AppliedPredictiveModeling)
+cmp <- get(data(ChemicalManufacturingProcess))
+cmp
+#which(is.na(cmp))
+
+#Impute missing data
+imputeData <- preProcess(cmp, method = c("knnImpute"))
+
+#Split into train and test
+data <- imputeData$data
+
+trainPart <- createDataPartition(data$Yield, p=0.75, list=F)
+
+train <- data[trainPart, ]
+test <- data[-trainPart, ]
+
+# Transform, Center, Scale
+procData <- preProcess(train[,-1], #removing our y
+  method=c("BoxCox", "center", "scale"))
+
+#Get our processed data back, this doesn't create new predictions since we paired it with our train dataframe
+trainNoYield <- predict(procData,train[,-1])
+
+#Check for zero variance and multicol
+nearZeroVars <- nearZeroVar(trainNoYield)
+multiCol <- findCorrelation(cor(trainNoYield))
+trainNoYield <- trainNoYield[ ,-c(nearZeroVars, multiCol)] 
+
+#Put our yield column back with the data for ease of use in our train functions
+trainDataTrans <- data.frame(train$Yield,trainNoYield)
+
+
+#Setting up test data
+testNoYield <- predict(procData, test[,-1])
+testNoYield <- testNoYield[ ,-c(nearZeroVars, multiCol)]
+testDataTrans <- data.frame(test$Yield, testNoYield)
+
+```
+
+### MARS
+```{r}
+ #Define the candidate models to test with options from earth package
+marsGrid <- expand.grid(.degree = 1:2, .nprune = 2:38)
+set.seed(100)   #Fix the seed so that the results can be reproduced
+marsTuned2 <- train(train.Yield ~., data = trainDataTrans,  
+                    method = "earth",  
+                    tuneGrid = marsGrid,  #Explicitly declare the candidate models to test  
+                    trControl = trainControl(method = "cv")
+                   )
+
+marsTuned2$finalModel
+
+varImp(marsTuned2)
+
+```
+
+### SVM
+```{r}
+svmRTuned2 <- train(train.Yield ~., data = trainDataTrans,
+                   method = "svmRadial",
+                   preProc = c("center", "scale"),
+                   tuneLength = 14,
+                   trControl = trainControl(method = "cv")
+                   ) 
+svmRTuned2$bestTune
+
+print(paste0("RMSE: ",round(min(svmRTuned2$results$RMSE),2)))
+print(paste0("Rsq: ",round(min(svmRTuned2$results$Rsquared),2)))
+print(paste0("MAE: ",round(min(svmRTuned2$results$MAE),2)))
+svmRTuned2$finalModel
+```
+### KNN
+```{r}
+library(caret)
+knnModel2 <- train( train.Yield ~., data = trainDataTrans,
+                   method = "knn",
+                   preProc = c("center","scale"),
+                   tuneLength =10)
+
+```
+
+### Neural Net
+```{r}
+ctrl <- trainControl(method = "cv", number = 10)
+
+##The findCorrelation takes a correlation matrix and determines the 
+##column numbers that should be removed to keep all pair-wise correlations below a threshold
+(tooHigh <- findCorrelation(cor(trainingData[,-11]), cutoff = .75)) #none were found too high
+
+
+##Create a specific candidate set of models to evaluate:
+nnetGrid <- expand.grid(  .decay = c(0, 0.01, .1), 
+                          .size = c(1:10),  
+                          .bag = FALSE) #option is to use bagging instead of different random seeds.  
+set.seed(100) 
+nnetTune2 <- train(train.Yield ~., data = trainDataTrans,
+                  method = "avNNet",  
+                  tuneGrid = nnetGrid,  
+                  trControl = ctrl,
+                  linout = TRUE, trace = FALSE, 
+                  MaxNWts = 10 * (ncol(trainingData[,-11]) + 1) + 10 + 1, maxit = 500)
+```
+(a) Which nonlinear regression model gives the optimal resampling and test  set performance?
+
+The best resampling model shows SVM barely leading (.64 Rsq) ahead of MARS' .62. MARS claims an Rsquared of .68 in its final model, but this model does not appear in its results dataframe.
+
+The best test set performer is the SVM.
+
+```{r Train Acc Dataframe}
+
+
+trainAcc2 <- rbind(nnetTune2$results[6,][,c(4,5,6)],
+                  knnModel2$results[3,2:4],
+                  svmRTuned2$results[7,3:5],
+                  marsTuned2$results[7, 3:5]
+)
+trainAcc2 <- data.frame(trainAcc2, row.names = c("NNET","KNN","SVM","MARS"))
+trainAcc2
+```
+
+
+```{r Test Acc Results}
+
+#Test set performance
+nnPreds2 <- predict(nnetTune2, newData = testDataTrans[,-1])
+marsPreds2 <- predict(marsTuned2, newdata = testDataTrans[,-1])
+svmRPreds2 <- predict(svmRTuned2, newdata = testDataTrans[,-1])
+knnPred2 <- predict(knnModel2, newdata = testDataTrans[,-1])
+
+#postResample gets test set performance values
+
+
+
+
+data.frame(rbind(
+  postResample(pred = marsPreds2, obs = testDataTrans[,1]),
+  postResample(pred = svmRPreds2, obs = testDataTrans[,1]),
+  postResample(pred = knnPred2, obs = testDataTrans[,1]),
+  postResample(pred = nnPreds2, obs = testDataTrans[,1])
+                  ), 
+  row.names =  c("MARS","SVM","KNN","NN")
+)
+```
+
+
+
+(b) Which predictors are most important in the optimal nonlinear regression model? Do either the biological or process variables dominate the  list? How do the top ten important predictors compare to the top ten  predictors from the optimal linear model?
+
+Manufacturing Process 13, 32, 17, and BM03 are the heavy hitters.
+```{r}
+varImp(svmRTuned2)
+```
+
+(c) Explore the relationships between the top predictors and the response for the predictors that are unique to the optimal nonlinear regression model.  Do these plots reveal intuition about the biological or process predictors and their relationship with yield?
+
+We can see fairly strong relationships between the four most influential variables and yield, with the two on the left being negative and the two on the right being positive. This may reveal that these processes need deeper understanding as to why their relationships are so strong. MP17 and MP13 could be looked at to determine how to decrease their impact if increasing Yield is desired.
+```{r}
+important <- c("ManufacturingProcess13","ManufacturingProcess32","ManufacturingProcess17","BiologicalMaterial03")
+featurePlot(data[,important],data[,1])
+```
+

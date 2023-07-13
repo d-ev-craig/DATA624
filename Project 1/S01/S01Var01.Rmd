@@ -5,23 +5,6 @@ date: "2023-06-15"
 output: html_document
 ---
 
-#To do list:
-1. Compare auto.arima with log version of the data
-  - original data
-2. Compare auto.arima with means instead of removed NAs
-3. Try a (2,0,0) model
-4. Try a seasonal model?
-DONE5. tsCV - Cross Validate
-DONE6. test/train
-7. Check best ARIMA models again
-  -rotate through all?
-  -double check reasons that give clues to the right model from ACF/PACF
-  
-  
-  Could be from outliers
-
-
-
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(forecast) #accuracy
@@ -232,7 +215,7 @@ write_csv(data.frame(autoTrainPoint80$mean), "C:\\Users\\dcrai\\source\\repos\\D
 # 
 # Model df: 3.   Total lags used: 50
 
-#MAPE of .92, which is good if its less than a percentage point, we want something close to 0
+#MAPE of 5.81, which is good if its less than a percentage point, we want something close to 0
 
 (accTrain80 <- trainAuto80 %>% forecast(h = val80Pred) %>%
   forecast::accuracy(tsS01v1))
@@ -245,18 +228,20 @@ write_csv(data.frame(autoTrainPoint80$mean), "C:\\Users\\dcrai\\source\\repos\\D
 ```
 
 #Naive & Average
-Both the naive and average methods performed pretty poorly with MAPE scores nearly at 100.
+The Naive method worked well until you introduced later data where it jumped from 5.5% to 12.2%, so I prefer the ARIMA model from before.
 ```{r}
 # Fit the Naive model
 naiveModel70 <- naive(train70, h = 140)
 naiveModel80 <- naive(train80, h = 140)
 
-# Make predictions for the next 140 observations
-forecast(naiveModel70, h = 140) %>% forecast::accuracy(tsS01v1)
-forecast(naiveModel80, h = 140) %>% forecast::accuracy(tsS01v1)
+exp(naiveModel70$mean) %>% forecast::accuracy(tsS01v1)   #MAPE 5.39
+exp(naiveModel80$mean) %>% forecast::accuracy(tsS01v1)   #MAPE 1.72
 
+
+#Average Prediction
 forecast(mean(train70), h = 1622) %>% forecast::accuracy(tsS01v1)
 forecast(mean(train80), h = 1622) %>% forecast::accuracy(tsS01v1)
+
 
 ```
 
@@ -318,7 +303,7 @@ arima211Preds
 fitAuto <- auto.arima(tsS01v1, stepwise=FALSE, approximation = FALSE)
 fitAuto #2428.77
 
-firArima312 <- Arima(tsS01v1, order = c(3,1,2))
+fitArima312 <- Arima(tsS01v1, order = c(3,1,2))
 fitArima312 #2428.54
 
 
@@ -768,7 +753,7 @@ a3[,c("RMSE","MAE","MAPE","MASE")]
 ```
 
 
-## Seasonal Stuff Ghetto Checking
+## Seasonal Stuff Checking
 ```{r}
 #for every 100 indexes, there seems to be 4 cycles
 

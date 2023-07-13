@@ -74,7 +74,7 @@ Fe <- corrs[9, corrs[9,] > .2 | corrs[9,]< -.2]
 
 corrList <- list(RI, Na, Mg, Al, Si, K, Ca, Ba, Fe)
 ```
-|   Checking the correlation plot, here are notes highlighting any correlation breaching .2 or -.2 for each predictor. Note that RI had a correlation with itself of .2, it is the first item in the below list. All others can be identified by the correlation to itself at 1.0:
+|   Checking the correlation plot, here are notes highlighting any correlation breaching .2 or -.2 for each predictor. Note that RI had a correlation with itself of .2, it is the first item in the below list under index [[1]]. All others can be identified by the correlation to itself at 1.0:
 ```{r}
 corrList
 ```

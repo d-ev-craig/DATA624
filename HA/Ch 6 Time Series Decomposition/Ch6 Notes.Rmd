@@ -1,0 +1,243 @@
+---
+title: "Ch 6 Forecasting Components"
+author: "Daniel Craig"
+date: "2023-06-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(fpp2)
+library(forecast)
+library(seasonal)
+```
+
+# Time Series Decomposition
+
+Time series are often broken down into 3 portions;
+1. Seasonal Component
+2. Trend - Cycle component (combines trend and cycle)
+3. Remainder component
+
+|   Decomposition can be broken down by into additive and multiplicative representations:
+$$y_t = S_t + T_t + R_t$$
+$$y_t = S_t * T_t * R_t$$
+
+Multiplicative dempositions are typically used when the variation around the trend-cycle is proportional to the level of the time series. One way to combat this is by taking a log of the data, or some other transformation until the series appears to be stable over time and then using an additive decomposition.
+  
+  
+|   From STL, you can see the breakdown.
+```{r}
+elecequip %>% stl(s.window='periodic') %>% autoplot()
+
+```
+|   The grey bars on the right represent the scale of the components. They all represent the same length but are shorter or longer pending their scale (y axis on the opposite side of the graph).
+
+#### Seasonally Adjusted Data
+|   If seasonality is removed from the data it is represented like so in additive and multiplicative like so:
+$$y_t - S_t = T_t + R_t$$
+$$\frac{y_t}{S_t} = T_t + R_t$$
+|   Do note that if searching for "turning" points in data, it is better to use the trend-cycle (seasonality is a part of this) in the model rather than seasonally adjusted data.
+|   It is also common to have the averages be odd numbered m's to maintain symmetry.
+
+## 6.2 Moving Averages
+|   This section introduces the classical decomposition method by using a moving average method to estimate the trend-cycle at first.
+
+|   Am *m*-MA, moving average of order *m*, can be written as such: $$\hat{T_t} = \frac{1}{m}  \sum_{j=-k}^{k}y_{t+j} \; ,where \; m=2k+1$$
+Above describes estimating the trend=cycle at time $t$ is obtained by averaging values of the time series within *k* periods of *t*. *k* represents the number of data points on each side of the central point used to calculate the moving average. i.e. an order of 5 means we take the average of 5 data points; the central point, and the two points on either side of it. If we take an m = 4 MA, it uses the 3 previous observations. In general, if m is even, it uses that m - 1 previous observations and the main point itself in estimating the average.
+```{r}
+autoplot(elecsales) + xlab("Year") + ylab("GWh") +
+  ggtitle("Annual electricity sales: South Australia")
+```
+
+Some code that shows pulling the moving averages but without the first and last two.
+```{r pressure, echo=FALSE}
+ma(elecsales,5)
+```
+
+
+
+```{r}
+autoplot(elecsales, series="Data") +
+  autolayer(ma(elecsales,5), series="5-MA") +
+  xlab("Year") + ylab("GWh") +
+  ggtitle("Annual electricity sales: South Australia") +
+  scale_colour_manual(values=c("Data"="grey50","5-MA"="red"),
+                      breaks=c("Data","5-MA"))
+```
+#### Moving Average of a Moving Average/Centered Moving Avgs
+|   This is done to make even-order moving average symmetric (ie. you do an even ordered *m* at m = 4, and you want to make it symmetric/odd, you take another at m = 2)
+
+```{r}
+beer2 <- window(ausbeer,start=1992)
+ma4 <- ma(beer2, order=4, centre=FALSE)
+ma2x4 <- ma(beer2, order=4, centre=TRUE)
+data.frame(ma4, ma2x4)
+```
+#### Estimating Trend-Cycle w/ Seasonal Data
+|   Most common use of centered moving averages is for estimating trend-cycle from seasonal data.
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\HA\\Ch 6 Time Series Decomposition\\figs\\2x4 MA ex.png")
+```
+
+* A 2x4 MA, when applied to quarterly data as above, each quarter is given equal weight as the first and last terms apply to the same quarter in consecutive years (if you add 1/8 + 1/8 = 1/4). This causes seasonal variation to be averaged out and resulting values will have little or no seasonal variation remaining. Similar effects can be found with a 2x8 MA or 2x12 to quarterly data.
+* If the seasonal period is even and of order *m*, we use a 2x *m*-MA to estimate the trend cycle, since this even moving average will remove all seasonal variation.
+* If the seasonal period is odd and of order *m*, we use *m*-MA to estimate the trend cycle. ie. monthly data lends itself to a 2x12-MA while daily data lends itself to 7-MA, if you're looking to estimate the trend-cycle of either.
+
+##### Weighted Moving Averages
+|   Combinations of moving averages result in weighted moving averages. ie. the 2x4-MA example before is equivalent to a 5-MA with weights $[1/8,1/4,1/4,1/4,1/8]$.
+* Weighted *m*-MA can be written as $\hat{T_t} = \sum_{j = -k}^{k} a_j y_{t+j}$ where k = (m-1)/2
+* Weights are given be $a$; it is important that they sum to 1 and are symmetric so that $a_j = a_-j$
+* weighted moving averages yield smoother estimate of the trend-cycle since weights slowly increase and slowly decrease
+  
+  
+## 6.3 Classical Decompisition
+
+Additive Decomposition:
+1. If *m* is even, compute the rend-cycle component $\hat{T_t}$ using a 2 x *m*-MA. If *m* is odd, compute it using an *m*-MA
+2. Calculate the detrended series: $y_t - \hat{T_t}$
+3. Estimate the seasonal component for each season by averaging the detrended values for that season. For monthly data, the seasonal component for March is the average of all the detrended March values in the data. These seasonal component values are then added to esnure they equal zero.  The seasonal component is obtained by stringing togther these monthly values, and then replicating the sequence for each year of data. This created $\hat{S_t}$
+4. The remainder is calculated by subtracting the estiamted seasonal and trend-cycle components: $\hat{R_t} = y_t - \hat{T_t} - \hat{S_t}$
+  
+  
+Multiplicative Decomposition:
+Multiplication is similar but with division instead of subtraction
+1. If *m* is even, compute the rend-cycle component $\hat{T_t}$ using a 2 x *m*-MA. If *m* is odd, compute it using an *m*-MA
+2. Calculate the detrended series: $\frac{y_t}{\hat{T_t}}$
+3. To estimate seasonal component for each season, average the detrended values for that season. For monthly data, the seasonal index for March is the average of all the detrended March values in the data. These indexes for each month are adjusted to ensure that they add to m. The seasonal component is obtained by stringing together these monthly indexes and replicating the sequence for each year of data.
+4. Remainder is calculated by dividing out the estimated seasonal and trend-cycle components: $\hat{R_t} = \frac{y_t}{(\hat{T_t}\hat{S_t})}$
+
+### Example of Decompisition Inference
+|   Look at below example of a classical decomposition.
+1. There is a run of remainder values in 2009 in the bottom panel that suggest "leakage" of the trend-cycle component
+2. The trend-cycle estimate in panel 2 has over over-smoothed the drop in data in 2009, and the remainders have been been affected by that poor estimate
+
+```{r}
+elecequip %>% decompose(type="multiplicative") %>%
+  autoplot() + xlab("Year") +
+  ggtitle("Classical multiplicative decomposition
+    of electrical equipment index")
+```
+
+
+### Final Remarks on Classical Decomp
+|   It is widely used, but not recommended since there are better alternatives. Some problems with classical decomp are below:
+1. Estimates of the trend-cycle are unavailable for the first and last examples since it requires points surrounding a central point (and since its the beginning or end its a terminal point with nothing surrounding)
+2. Trend-cycle estimates tend to over-smooth rapid rises and fall sin data
+3. Classical decomp assumes seasonal components repeat from year to year, which is not always the case. Particularly with seasonal changes that occur over long periods of time(decades)
+4. The classical method is inordinately impacted by outliers and anomalous data like monthly air passenger traffic during an industrial dispute that impacts traffic by passengers.
+
+## 6.4 X11 Decomp
+|   X11 includes many extra steps from the Classical Method that handles the drawbacks of:
+1. Trend-cycle estimates are available for end points
+2. Seasonal components are allowed to vary over time
+3. Handling effects of known predictors
+4. Handles both additive and mult. decomp
+5. Is robust to outliers and level shifts in the time series
+* Univariate time series where only one series is being adjusted
+* X11 is good with stable and regular seasonal patterns
+* Due to its long history, its typically compatible with other existing methods
+
+### Examples of how to use:
+`seas()` from the `library(seasonal)` package  
+Given output from `seas()` you can use the following commands:  
+1. `seasonal()` extract seasonal component  
+2. `trendcycle()` extracts trend cycle
+3. `remainder()` extracts remainder component
+4. `seasadj()` will compute seasonall adjusted time series
+  
+  
+Here we can see it captures the fall in the 2009 data better than STL or Classical methods since the remainders around 2009 look a bit cleaner. Note that to use the x11 model, the `seas(x11="")` option must be set
+```{r}
+library(seasonal)
+elecequip %>% seas(x11="") -> fit
+autoplot(fit) +
+  ggtitle("X11 decomposition of electrical equipment index")
+```
+  
+  
+Here we can highlight each component in a graph using the functions above:
+```{r}
+autoplot(elecequip, series="Data") +
+  autolayer(trendcycle(fit), series="Trend") +
+  autolayer(seasadj(fit), series="Seasonally Adjusted") +
+  xlab("Year") + ylab("New orders index") +
+  ggtitle("Electrical equipment manufacturing (Euro area)") +
+  scale_colour_manual(values=c("gray","blue","red"),
+             breaks=c("Data","Seasonally Adjusted","Trend"))
+```
+  
+  
+Its useful to plot these in sub-series plots to help visualize the variation in the seasonal component over time and removing the trend-cycle component at the same time
+```{r}
+fit %>% seasonal() %>% ggsubseriesplot() + ylab("Seasonal")
+```
+
+## 6.5 SEATS Decomposition
+SEATS:Seasonal Extraction in ARIMA Time Series
+* Only works on quarterly and monthly data
+* Developed by bank of Spain
+Good for:
+*Multivariate data sicne it can handle complex seasonal patterns and interdependencies between multiple series
+*Nonliner and irregular seasonal patterns
+* Handles data with short term and long term dependencies well
+
+Below is very similar to X11 and all output can be used with the similar functions listed above `remainder()`, `trendcycle()`, `seasonal()`, and `seasadj()`
+```{r}
+library(seasonal)
+elecequip %>% seas() -> fitSEATS
+
+fitSEATS %>%
+autoplot() +
+  ggtitle("SEATS decomposition of electrical equipment index")
+```
+
+```{r}
+autoplot(elecequip, series="Data") +
+  autolayer(trendcycle(fitSEATS), series="Trend") +
+  autolayer(seasadj(fitSEATS), series="Seasonally Adjusted") +
+  xlab("Year") + ylab("New orders index") +
+  ggtitle("Electrical equipment manufacturing (Euro area)") +
+  scale_colour_manual(values=c("gray","blue","red"),
+             breaks=c("Data","Seasonally Adjusted","Trend"))
+```
+
+## 6.6 STL Decomposition
+STL: Seasonal and Trend decomposition useing Loess  
+Loess is a method for estimating nonlinear relationships
+  
+Advantages over classical, SEATS, X11:
+1. Handles any type of seasonality, unlike SEATS's requirement of monthly or quarterly data
+2. Seasonal component is allowed to change over time, similar to X11, as well as the rate of change can be controlled by the user
+3. Smoothness of the trend-cycle can be controlled by the user
+4. The estiamtes of trend-cycle and seasonal components are robust to outliers, but it will effect the remainder component
+  
+Disadvantages:
+1. Cannot handle trading day or valendar variation automatically
+2. Only accomodates additive decomps
+    *mult decomp can be achieved by taking logs of data and back transforming the components($\lambda$ = 0 is mult decomp and $\lambda$ = 1 is equivalent to additive)
+
+Below is an example of using STL with the robust option on, and t.window=13(IDK what it do), but the graph highlights the downturn of 2009 more adequately than before.
+
+### Code Examples
+|   `t.window = ` and `s.window = ` control how rapidly the trend-cycle and seasonal components can change, smaller values allow for more rapid changes and should be odd numbers.
+`t.window = `: numver of consecutive observations to be used when estimating trend-cycle
+`s.window = `: number of consecutive years to bse used when estimating each value in the seasonal component, must be specified as there's no default
+
+`mstl()` is an automated STL decomp using `s.window = 13` and `t.window` is chosen automatically and usually gives a good balance between overfitting seasonality and allowing it to slowly change over time.
+```{r}
+elecequip %>%
+  stl(t.window=13, s.window="periodic", robust=TRUE) %>%
+  autoplot()
+```
+
+Compare versus our earlier version below:
+```{r}
+elecequip %>% stl(s.window='periodic') %>% autoplot()
+
+```
+
+all output can be used with the similar functions listed above `remainder()`, `trendcycle()`, `seasonal()`, and `seasadj()`
+
+## 6.7 Measuring Strength of Trend and Seasonality
+

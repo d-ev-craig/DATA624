@@ -1,0 +1,35 @@
+---
+title: "Ch6 Notes Linear Regression"
+author: "Daniel Craig"
+date: "2023-07-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 6.3 Partial Least Squares
+|   PLS is good when you have correlated predictors and linear regression is desired.
+|   Data should be centered and scaled
+
+You may be tempted to perform PCA and then regression, but this can lead to instances where PCA combines correlated predictors, which is good, but those predictors can still be irrelevant to the predictor.
+
+Summary of Algorithm: PLS finds relationships between predictors that are highly correlated with the response
+
+PLS can be considered a "supervised" dimension reduction procedure since the relationship to outcome variance is used as the means to determine which are good and bad predictor relationships/combinations.
+PCR (Principal Component Regression) can be considered "unsupervised" since it just groups highly correlated variables together and is used regardless of their importance to the outcome.
+
+|   Variable Importance:
+Measured by *variable importance in the projection* (VIP), values above 1 are considered important, below 1 should be considered for removal
+
+|   Penalized Variants:
+Due to PLS' proclivity to lower MSE easily by introducing small amounts of bias for certain parameter estimates that have very large estimates, penalized models are introduced. MSE is a combination of bias and variance, by introducing bias in the parameters, it allows variance to be substantially lowered.
+
+Its not quite clear to me what we're penalizing or why.
+
+Ridge Regression: Adds a penalty to the parameter estimates such that they are proportional to their impact on SSE (ie. their predictive ability of outcome variance). As the estimates gets larger, its shrunk by ridge regression. By allowing some bias, it allows the model to lower MSE past values of unbiased models.
+
+Lasso (*least absolute shrinkage and selection operator*): Similar to ridge regression in that it shrinks large parameters, it also reduces other parameters all the way to 0 and performs feature selection. Out of a batch of highly correlated predictors, it will pick one and ignore the rest.
+
+LARS (*least angle regression*): The LARS model is a more efficient application of Lasso and Ridge. It will apply both the penalties from each Lasso and Ridge to regularize parameters like Ridge does and perform feature selection like Lasso.

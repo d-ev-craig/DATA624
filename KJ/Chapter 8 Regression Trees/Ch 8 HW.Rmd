@@ -1,0 +1,437 @@
+---
+title: "Ch8 HW"
+author: "Daniel Craig"
+date: "2023-06-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(mlbench)
+set.seed(200)
+simulated <- mlbench.friedman1(200, sd =1)
+simulated <- cbind(simulated$x, simulated$y)
+simulated <- as.data.frame(simulated)
+colnames(simulated)[ncol(simulated)] <- "y"
+```
+
+a. Fit a random forest model to all of the predictors, then estimate the variable importance scores. Did the random forest model significantly use the uninformative predictors (V6 - V10)?
+
+```{r}
+library(randomForest)
+library(caret)
+model1 <- randomForest( y ~., data = simulated,
+                        importance = TRUE,
+                        ntree = 1000
+                        )
+
+rfImp1 <- varImp(model1, scale = FALSE)
+rfImp1
+```
+
+No, the random forest model attributed very low importance to variable V6 - v10.
+
+b. Now add an additional predictor that is highly correlated with one of the informative predictors. For example:
+```{r}
+simulated$duplicate1 <- simulated$V1 + rnorm(200) * .1
+cor(simulated$duplicate1, simulated$V1)
+```
+Fir another random forest model to these data. Did the importance score for V1 change? 
+
+The importance score for V1 lowered from about 8.7 to 5.7.
+
+```{r}
+model2 <- randomForest( y ~., data = simulated,
+                        importance = TRUE,
+                        ntree = 1000
+                        )
+
+rfImp2 <- varImp(model2, scale = FALSE)
+rfImp2
+```
+
+
+What happens when you add another predictor that is also highly correlated with V1?
+```{r rf varimp}
+simulated$duplicate2 <- simulated$V1 + rnorm(200) * .1
+cor(simulated$duplicate1, simulated$V1)
+
+model3 <- randomForest( y ~., data = simulated,
+                        importance = TRUE,
+                        ntree = 1000
+                        )
+
+rfImp3 <- varImp(model3, scale = FALSE)
+rfImp3
+```
+The importance score for V1 lowers again down to 4.6
+
+
+c. Use the `cforest` function in the party package to fit a random forest model using conditional inference trees. The `party` packge function `varimp` can calculate predictor importance. The `conditional` argument of that function toggles between the traditional importance measure and the modified version. Do these importances show the same pattern as the traditional random forest model?
+
+```{r condinf varimp}
+library(party)
+cTree <- cforest(y ~., data = simulated)
+varimp(cTree)
+varimp(cTree, conditional = TRUE)
+```
+The traditional importance measure where `conditional = FALSE` matches the patterns from earlier. Under traditional importance, V1 holds around a 4 when the duplicate predictors are present with V2 at 5.93. V7 is rated at 7.12
+
+When `conditional = TRUE` the patterns are roughly the same but have different values. V1 is is significantly less at 1.55, V2 is lowered at 4.55, and V4 is the highest at 5.8 while the duplicates are present. So the overall ranks of predictor importance are the same, but with different values.
+
+d. Repeat this process with different tree models such as boosted trees and Cubist. Does the same pattern occur?
+
+```{r Boosted}
+library(gbm)
+# gbmModel <- gbm.fit(simulated, simulated$y, distribution = "gaussian")
+
+dup1 <- simulated$duplicate1
+dup2 <- simulated$duplicate2
+
+simulated <- simulated[,-(12:13)]
+
+gbmModel <- gbm(y ~., data = simulated, distribution = "gaussian")
+
+summary.gbm(gbmModel)
+```
+With a boosted model, we see V4 become the most important, with V1 closely behind. V2 is just beneath V1, and then a significant drop in relevance to V5 and subsequent predictors.
+
+```{r Boosted Dup Varimp}
+simulatedDup1 <- cbind(simulated, dup1)
+
+gbmModelDup1 <- gbm(y ~., data = simulatedDup1, distribution = "gaussian")
+
+summary.gbm(gbmModelDup1)
+```
+We see a similar pattern adding a highly correlated variable in dup1 to the model. V1 drops in importance and part of it is taken by the correlated variable.
+
+```{r Cubist Varimp}
+library(Cubist)
+
+cubistCaret <- train(y ~.,data = simulated, method = "cubist")
+
+varImp(cubistCaret)
+```
+Without any correlated variables we see the usual V1, V2, and V4 topping importance. In the cubist model, some importance was given to V6, despite earlier notices that it was insignificant.
+
+```{r}
+cubistCaretDup1 <- train(y ~.,data = simulatedDup1, method = "cubist")
+
+varImp(cubistCaretDup1)
+```
+Here we see V1 drop and is replaced by V2. Our correlated variable, 'dup1', is listed 5th in importance. In summary, we do see the same pattern reveal itself; when a highly correlated variable is introduced, it takes part of the original variable's significance.
+
+8.2 Use a simulation to show tree bias with different granularities
+
+Regression trees are susceptible to bias via granularity. Predictors that have more distinct values are preferred to create splits on. Predictors with more distinct values have lower variance, as opposed to less distinct values which create higher variance.
+
+We can highlight this by creating a predictor that has only two values ( we will use 0 and 1), create a resulting variable from the predictor with some noise, and then create another predictor variable with no relationship but more distinct values and check variable importance the tree assigned.
+```{r 8.2 Simu}
+# Required Libraries
+library(rpart)
+library(ggplot2)
+
+set.seed(1111)
+xReal <- rep(1:0, each=50)
+y <- xReal + rnorm(100, mean=0, sd=2)
+
+xDummy <- rnorm(100, mean=0, sd=4)
+
+data <- data.frame(xReal, xDummy, y)
+
+dataTree <- rpart(y ~ ., data = data)
+
+varImp(dataTree)
+```
+Even though our xDummy had no relationship to the y variable, and was generated using a higher standard deviation, its importance was labeled as higher than the xReal variable.
+
+
+8.3 In stochasitc gradient boosting the bagging fraction and learning rate will govern the construction of the trees as they are guided by the gradient. Although the optimal values of these parameters should be obtained through the tuning process, it is helpful to understand how the magnitudes of these parameters affect magnitudes of variable importance. Figure 8.24 provides the variable importance plots for boositng using two extreme values for the bagging fraction (0.1 and 0.9) and the learning rate (0.1 and 0.9) for the solubility data. The left hand plot has both parameters set to 0.1, and the right hand plot has both set to 0.9:
+
+a. Why does the model on the right focus its importance on just the first few predictors, whereas the model on the left spreads importance across more predictors?
+
+The learning rate being set to 0.1 cause each tree's prediction created in the boosting process to be shrunk by a factor of 0.1. This was introduced to fight over-fitting induced by the "greedy strategy" of choosing the optimal weak learner at each stage which would cause predictions to be overly reliant on a specific weak learner.
+
+The bagging fraction set to 0.1 restricts the amount of data used in training the tree. This creates less variance and restricts the amount of weight a potential highly influential predictor can have on the model building.
+
+Since both of these parameters are used to reduce reliance on a particular predictor (and thus make a more stable prediction with less variance) that is why the plot on the left spreads variable importance across a wider range of predictors compared to the plot on the right. One could argue the plot on the right is overfitted to specific predictors.
+
+b. Which model do you think would be more predictive of other samples?
+
+I think that the model on the left would be more predictive of other samples as it still incorporates the heavily influential predictors from the model on the right, but avoids the danger of being overfit and could be more easily generalized to new data since it spreads variable importance to other variables.
+
+c. How would increasing interaction depth affect teh slope of predictor importance for either model in Fig. 8.24?
+
+Increasing interaction depth would increase the number of other variables present in each fit created during the boosting process. That would increase the exposure variables outside the most dominant receive and thus receive more importance. It is assumed that only some of the less important variables are revealed as important in the plot/model on the left due to the 0.1 bagging fraction. Ultimately, it would smooth the slope of predictor importance and be less of a sharp decline.
+
+
+8.7 Refer to exercises 6.3 and 7.5 which describe a chemical manufacturing process. Use the same data imputation, data splitting, and pre-processing steps as before and train several tree-based models:
+
+```{r 8.7 Partition}
+library(AppliedPredictiveModeling)
+cmp <- get(data(ChemicalManufacturingProcess))
+cmp
+#which(is.na(cmp))
+
+#Impute missing data
+imputeData <- preProcess(cmp, method = c("knnImpute"))
+
+
+#Split into train and test
+data <- imputeData$data
+
+trainPart <- createDataPartition(data$Yield, p=0.75, list=F)
+
+train <- data[trainPart, ]
+test <- data[-trainPart, ]
+
+# Transform, Center, Scale
+procData <- preProcess(train[,-1], #removing our y
+  method=c("BoxCox", "center", "scale"))
+
+#Get our processed data back, this doesn't create new predictions since we paired it with our train dataframe
+trainNoYield <- predict(procData,train[,-1])
+
+#Check for zero variance and multicol
+nearZeroVars <- nearZeroVar(trainNoYield)
+multiCol <- findCorrelation(cor(trainNoYield))
+trainNoYield <- trainNoYield[ ,-c(nearZeroVars, multiCol)] 
+
+#Put our yield column back with the data for ease of use in our train functions
+trainDataTrans <- data.frame(train$Yield,trainNoYield)
+```
+
+```{r CART}
+rpartTree <- rpart(train.Yield ~., data = trainDataTrans)
+ctrl <- trainControl(method = "cv")
+tuneDepth <- expand.grid(maxdepth= seq(1,10,by=1))
+tuneCP <- expand.grid(cp = c(.01,.05,.1,.2))
+
+#rpart2 to train over max depth
+rpart2Tree <- train(train.Yield ~., 
+                 data = trainDataTrans, 
+                 method = "rpart2",
+                 tuneGrid = tuneDepth,
+                 trControl = ctrl) 
+
+#method = "rpart"
+rpartTree <- train(train.Yield ~., 
+                 data = trainDataTrans, 
+                 method = "rpart",
+                 tuneGrid = tuneCP,
+                 trControl = ctrl)
+
+cartDepthRMSE <- min(rpart2Tree$results$RMSE)
+cartDepthRsq  <- max(rpart2Tree$results$Rsquared)
+
+#Depth performed better and below is tuning over Complexity Parameter, so leaving out
+# cartCPRMSE <- min(rpartTree$results$RMSE)
+# cartCPRsq<- max(rpartTree$results$Rsquared)
+```
+
+```{r M5 Reg Model}
+library(RWeka)
+yesno <- c("Yes", "No")
+tuneM5 <- expand.grid(pruned = yesno, smoothed = yesno, rules = yesno)
+
+m5Tune <- train(train.Yield ~.,
+                data = trainDataTrans,
+                 method = "M5", #or "M5Rules"
+                 trControl = ctrl,
+                control = Weka_control(M=10),
+                tuneGrid = tuneM5
+                 )
+
+m5RMSE <- min(m5Tune$results$RMSE)
+m5Rsq <- max(m5Tune$results$Rsquared)
+
+#Rules version outperforms non-rules
+tuneM5Rules <- expand.grid(pruned = yesno, smoothed = yesno)
+m5RulesTune <- train(train.Yield ~.,
+                data = trainDataTrans,
+                 method = "M5Rules", #or "M5Rules"
+                 trControl = ctrl,
+                control = Weka_control(M=10),
+                tuneGrid = tuneM5Rules
+                 )
+min(m5RulesTune$results$RMSE) #not as good as other so excluded
+min(m5RulesTune$results$Rsquared) #low so not included
+```
+
+I used the following location to read more about the bagControl option, it was quite useful: https://rdrr.io/cran/caret/man/bag.html
+```{r BAG}
+library(kernlab)
+n <- ncol(trainDataTrans)
+tuneVars <- data.frame(vars = seq(2,n,10))
+
+svmBagCtrl <- bagControl(fit = svmBag$fit,
+                      predict = svmBag$pred,
+                      aggregate= svmBag$aggregate)
+
+citBagCtrl <- bagControl(fit = ctreeBag$fit,
+                      predict = ctreeBag$pred,
+                      aggregate= ctreeBag$aggregate)
+
+#Attempted using SVM bag ctrl method but it gave many warnings/errors
+
+# tuneSVMBag <- train( train.Yield ~., 
+#                   data = trainDataTrans,
+#                   method = "bag",
+#                   trControl = trainControl(method = "boot",number = 10),
+#                   tuneGrid = tuneVars,
+#                   bagControl= svmBagCtrl
+#                   )
+
+tuneCITBag <- train( train.Yield ~., 
+                  data = trainDataTrans,
+                  method = "bag",
+                  trControl = trainControl(method = "boot",number = 10),
+                  tuneGrid = tuneVars,
+                  bagControl= citBagCtrl
+                  )
+
+
+bagRMSE <- min(tuneCITBag$results$RMSE)
+bagRsq <- min(tuneCITBag$results$Rsquared)
+
+```
+
+```{r RandomForest}
+
+gridRF <- expand.grid(mtry = seq(2,20, by = 2))
+
+tuneRF <- train( train.Yield ~., 
+                  data = trainDataTrans,
+                  method = "rf",
+                  trControl = trainControl(method = "boot",number = 10),
+                  tuneGrid = gridRF,
+                  bagControl= citBagCtrl
+                  )
+rfRMSE <- min(tuneRF$results$RMSE)
+rfRsq <- min(tuneRF$results$Rsquared)
+```
+
+```{r SGB}
+#Example grid from book, but added n.minobsinnode
+gbmGrid <- expand.grid(
+  interaction.depth = seq(1,7, by = 2),
+  n.trees = seq(100,1000,by = 50),
+  shrinkage = c(.01,.1),
+  n.minobsinnode=10
+  )
+
+sgbTune <- train(train.Yield ~., data = trainDataTrans,
+                 method = "gbm", 
+                 tuneGrid = gbmGrid,
+                 trControl = trainControl(method = "boot", number = 10),
+                 verbose=F)
+
+sgbRMSE <- min(sgbTune$results$RMSE)
+sgbRsq <- max(sgbTune$results$Rsquared)
+```
+
+```{r Cubist}
+
+cubistGrid <- expand.grid(
+  committees = seq(1,100, by = 10),
+  neighbors = seq(1,10, by =2)
+  )
+
+cubistTune <- train(train.Yield ~., data = trainDataTrans,
+                 method = "cubist", 
+                 tuneGrid = cubistGrid,
+                 trControl = trainControl(method = "boot", number = 10)
+                )
+
+cubistRMSE <- min(cubistTune$results$RMSE)
+cubistRsq <- max(cubistTune$results$Rsquared)
+```
+
+```{r Train Acc Dataframe}
+trainAcc <- data.frame( RMSE = c(cartDepthRMSE,m5RMSE,bagRMSE,rfRMSE,sgbRMSE,cubistRMSE),
+                        Rsq = c(cartDepthRsq,m5Rsq,bagRsq,rfRsq,sgbRsq,cubistRsq),
+                        row.names = c("CART","M5 No Rules","Bag","RF","SGB","Cubist")
+                        )
+
+trainAcc
+```
+
+```{r Test Acc Results}
+
+# Transform, Center, Scale
+
+#Get our processed data back, this doesn't create new predictions since we paired it with our test dataframe
+testNoYield <- predict(procData,test[,-1])
+
+#Removing the same variables with near zero variance and multi-coll
+testNoYield <- testNoYield[ ,-c(nearZeroVars, multiCol)]
+
+cartPreds <- predict(rpart2Tree, newdata = testNoYield)
+m5NoRPreds <- predict(m5Tune, newdata = testNoYield)
+bagPreds <- predict(tuneCITBag, newdata = testNoYield)
+rfPreds <- predict(tuneRF, newdata = testNoYield)
+sgbPreds <- predict(sgbTune, newdata = testNoYield)
+cubistPreds <- predict(cubistTune, newdata = testNoYield)
+
+
+data.frame(rbind(
+  postResample(pred = cartPreds, obs = test$Yield),
+  postResample(pred = m5NoRPreds, obs = test$Yield),
+  postResample(pred = bagPreds, obs = test$Yield),
+  postResample(pred = rfPreds, obs = test$Yield),
+  postResample(pred = sgbPreds, obs = test$Yield),
+  postResample(pred = cubistPreds, obs = test$Yield)),
+  row.names =  c("CART","M5NoR","BAG","RF","SGB","CUBIST")
+  )
+
+
+
+# metrics <- function(tune) {
+#   RMSE = min(tune$results$RMSE)
+#   Rsquared = max(tune$results$Rsquared)
+#   MAE = min(tune$results$MAE)
+#   return(cbind(RMSE, Rsquared, MAE)) 
+#   }
+# 
+# models <- c(nnetTune,knnModel,svmRTuned,marsTuned)
+# metrics(models)
+
+# data.frame(rbind(metrics(tune1), metrics(tune2),
+#   metrics(tune3), metrics(tune4), metrics(tune5),
+#   metrics(tune6), metrics(tune7), metrics(tune8), metrics(tune9)),
+#   row.names = c("PLS","KNN","CART","CIT","M5","BAG","RF","SGB","CUBE"))
+
+
+```
+
+a. Which tree-based regression model gives the optimal resampling and test set performance?
+
+Results indicate that Cubist performed best on both test and training data. RF and SGB both looked promising in training, although still behind Cubist, but only RandomForest seems usable outside of Cubist.
+
+b. Which predictors are most important in the optimal tree-based regression model? Do either the biological or process variables dominate the list? How do the top 10 important predictors compare to the top 10 predictors from the optimal linear and nonlinear models?
+
+```{r Variable Importance Comparison}
+varImp(cubistTune)
+varImp(tuneCITBag)
+varImp(tuneRF)
+
+dotPlot(varImp(cubistTune), top=10)
+```
+The top 4 most important variables to the cubist model are ManufacturingProcess32 (MP32), 17, 09, and 13. Followed by BiologicalMaterial10 (BM10). Only BMs 10, 03, and 08 appear in the top 10 with meager ratings. Manufacturing Processes seem to dominate.
+
+The Conditional Inference Bagged model and the Random Forest models both agree that MP32 is the most important, but fail to capture the importance of MP09. Between the models, there is no clear agreement on BPs.
+
+c. Plot the optimal single tree with the distribution of yield in the terminal nodes. Does this view of the data provide additional knowledge about the biological or process predictors and their relationship with yield?
+
+Note that this data is transformed but it is indicative of relationships between manufacturing processes and biological materials. MP32, 13, and BP05, BP09 playing the largest roles all play important roles in impacting yield. It may highlight some interactions effects between predictors, such as when MP32 is high in combination with MP13, or the opposite with MP32 and MP11.
+
+```{r Plot CART Tree}
+library(partykit)
+plot(as.party(rpart2Tree$finalModel), gp=gpar(fontsize = 7))
+```
+
+
+
+
+
+

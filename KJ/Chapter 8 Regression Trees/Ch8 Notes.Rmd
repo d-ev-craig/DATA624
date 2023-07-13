@@ -1,0 +1,332 @@
+---
+title: "Ch 8 Regression Trees"
+author: "Daniel Craig"
+date: "2023-06-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+# Regression Trees
+|   These notes are for Applied Predictive Modeling (KJ) Chapter 8, don't mix up with Ch 8 from HA (Forecasting Principles) Pages 173 - 218
+
+## 8.1 Basic Regression Trees
+|   First split is determined by testing every value of predictors such that when split, the SSE of each group add together to minimize overall SSE:
+$$SSE = \sum{(y_i - \bar{y_1})^2} + \sum{y_i - \bar{y_2}^2}$$
+|   This is repeated for each split until the number of samples within a split falls below some threshold(book gave 20 samples as an example).
+  
+  
+|   Trees are then pruned back by penalizing the error rate using the size of the tree, where $c_p$ is a complexity parameter. $c_p$ is determined by evaluating SSE across several $c_p$ and choosing the smallest tree that is within one standard error of the tree with the smallest absolute error (this tree with smallest absolute error will have no restriction on number of branches). It is also suggested to use a cross-validation approach
+$$SSE_cp = SSE + c_p * (No. \; Terminal \; Nodes)$$
+|   Regression trees handle missing data, when building they're ignored but for each split made, a variety of surrogate splits are evaluted. Surrogate splits have results similar to the original split and can be used when the predictor data for the original split are not available.
+
+|   To determine importance of the predictors used, track overall reduction in optimization criteria for each predictor. If SSE is the optimization criteria, reduction in SSE is aggregated for each predictor.
+
+|   Highly correlated predictors are somewhat randomly chosen between the two, which to make a split on.
+
+Disadvantages:
+1. Single trees predict poorly
+2. Single trees are unstable, slight alterations to data can significantly change results
+3. Selection bias; predictors with higher number of distinct values are favored over more granular predictors
+4. As missing values increase, selection of predictors becomes more biased
+
+Alt. Methods
+GUIDE Method: Generalized, Unbiased, Interaction Detection, and Estimation
+* ranks predictors using stat. hypothesis tests and finds split values for the most important factor found from those hypothesis tests
+*This causes the predictor variable and value to split on to be evaluated separately
+Conditional Inference Trees
+*Uses hypothesis tests to search across predictors and possible split points
+* For a split, a stat. test is used to evaluate difference between the means of the two groups to create a p value, which allows comparison across scales and reduce bias by allowing comparison corrections between split value candidates and their p values, which reduce bias for highly granular data
+* This method does not prune itself since as the data sets are further split, it reduces power in the hypothesis tests and increases p values which end more splitting
+*Still advised to choose tree size based on performance since the hypothesis tests are not directly related to predictive performance
+
+### Computing
+rpart makes splits using the CART methodology
+
+party makes splits based on the conditional inference framework using ctree()
+
+rpart function has several control parameters that can be accessed through the rpart.control argument
+
+train() from caret has controls cp (for complexity parameter) and maxdepth (maximum node depth).
+
+To tune an CART tree over the complexity parameter, the method option in the train function should be set to method = "rpart"
+
+To tune over max depth, the method option should be set to method = "rpart2"
+
+party section: accessed through the ctree_control argument
+
+mincriterion - defines stat criterion that must be met in order to continue splitting
+maxdepth - max depth of tree
+
+To tune a condition inference tree over `mincriterion`, set `method = "ctree"`
+To tune over max depth, set `method="ctree2"`
+
+```{r}
+library(rpart)
+library(party)
+library(caret)
+
+#rpartTree <- rpart(y ~., data = trainData)
+#ctreeTree <- ctree(y~., data = trainData)
+
+# rpartTune <- train(solTrainXtrans, solTrainY,
+#                    method = "rpart2",
+#                    tuneLength=10,
+#                    trControl=trainControl(method = "cv"))
+
+
+#plot from party package
+#plot(treeObject)
+
+#convert rpart trees to party object
+#library(partykit)
+#rpartTree2 <- as.party(rpartTree)
+#plot(rpartTree2)
+```
+
+
+## 8.2 Regression Model Trees
+
+Simple regression trees have a hard time predicting on values that are very high or low. This section describes the model tree approach which aims to combat that problem.
+
+### M5 Model
+Differs from simple regresstion trees:
+1. Splitting criterion is different
+2. Terminal nodes predict the outcome usin ga linear model(as opposed to the simple average)
+3. When a sample is predicted, a combination of predictions from different models along the same path are used
+*Found in `Weka` package, others are Loh (2002) and Zeiles et al. (2008)
+
+#### Split Criteria
+* Initial split is found using an exhaustive search but the expected reduction in the node's error rate is used, where S is the entire set of data and P represents subsets of data after splitting, SD is the standard deviation, $N_i$ is the number of samples in partition $i$
+
+$$reduction=SD(S)-\sum_{i=1}^{P}{ \frac{n_i}{n}} * SD(S_i)$$
+Above metric determines if the total variation in the splits, weighted by sample size, is lower than the presplit data. The split associated with the largest reduction in error is chosen and a linear model created within the partitions using the split variable. The process is repeated for each split. Splits end when no more improvement can be found or there aren't enough samples.
+
+
+#### Reducing M5's Linear Models
+|   Once tree is created, each predictor variable/split has a linear model. Each linear model is simplified by using an adjusted error rate below:
+$$Adjusted \; Error \; Rate \; = \frac{n^* + p}{n^* - p} \sum_{i=1}^{n^*}{|y_i - \hat{y_i}|}$$
+where n* is number of training set data points used to build model
+p is number of parameters in model
+Summary, the AER penalizes the model for having more parameters in it and sums the absolute differences between observed and predicted data from the linear model
+
+Each model term is dropped and adjusted error rate is computed and are left off if the AER decreases. Sometimes this reduces the linear model down to an intercept and is applied to each linear model.
+
+#### Smoothing in Model Trees
+To prevent over-fitting, a "recursive shrinking" method is used such that when a prediction is created, and let's suppose it first takes the most appropriate path, we will call the parent node, and creates a prediction using that parent node's linear model... but then it also travels down the path associated with Model 5 of the tree, it also generates a prediction for Model 5. These two predictions are combined by the below formula:
+$$\hat{y_p} = \frac{n_k \hat{y_k} + c\hat{y_p}}{n_k + c}$$
+where $\hat{y_k}$ is the prediction from Model 5
+$n_k$ is the number of training set data points in the child node
+$\hat{y_p}$ is the prediction from the parent node
+$c$ is a default value of 15
+
+The resulting combined value is then combined again with the next model up the tree. It is important to note only the models that are apart of the path to the terminal node are used. IE. if Model 1 and 3 were splits previous to Model 5, and the path chosen was to Model 5, the prediction would only be combined with predictions from Model 1 and 3.
+
+#### Pruning M5
+|   Once fully grown, it is pruned back by using the adjusted error rate method from earlier and dropping the sub tree if the AER is not reduced by comparing the tree's AER with and without the sub-tree. This continues until no trees can be removed.
+
+
+### Computing Model Trees
+Mainly found in the RWeka package, 
+M5P = model tree
+M5Rules = rule based
+
+```{r}
+library(RWeka)
+#m5tree <- M5P(y~., data = trainData)
+#m5rules <- M5Rules(y ~., data = trainData)
+
+#to change minimum number of training set points use control = Weka_control(M=10)
+
+#m5tree <- M5P(y~., data = trainData, control = Weka_control(M=10))
+```
+
+To tune these models, in the `train` function from caret, use `method = "M5"` to evaluate model trees or rule versions, and smoothing/pruning
+```{r}
+#m5Tune <- train(solTrainXtrans, solTrainY,
+#                  method = "M5", #or "M5Rules"
+#                  trControl = trainControl(method =                                                   "cv")
+#                  control = Weka_control(M=10))
+```
+
+
+
+## 8.3 Rule-Based Models (pg 190 ~15 pages in 1.5hrs?)
+Roughly 2.5 hrs left?
+**Rule**: defined as a distinct path through a tree
+
+ie. 
+NumCarbon > 3.777 &  
+SurfaceArea2 > 0.978 &  
+SurfaceArea1 > 8.404 &  
+FP009 <= 0.5 &  
+FP075 <= 0.5 &  
+NumRotBonds > 1.498
+
+Process of Creating Rule Based Model:
+1. Create a model and keep only the rule with the largest coverage(usually the first)
+2. Remove samples covered by the rule
+3. Create another model with remaining data
+4. Repeat until all training set data is covered by atleast one rule
+
+Predictions are created by using the linear model associated to the most appropriate path a new sample is attributed to
+
+
+## 8.4 Bagged Trees
+Bagging: Take a sample from the overall data sample (aka bootstrapping) and create a regression tree for that sample. Repeat creating regression trees over *m* number of bootstrapped samples and create regression trees for those samples. Average across all *m* trees when making predictions.
+
+Advantages:
+1. reduces variance of a prediction (quite good for unstable models like reg. trees)
+2. provide own internal estimate of predictive performance that works well with cross validation or test set estimates by using the *out of bag* samples to compare against
+
+Disadvantage:
+1. Computation increases as *m*, bootstrap samples, increases (is easily parallelized though)
+
+Best to use m=10 or less to aggregate bootstrap samples
+
+
+`ipred` packages contained `bagging`(formula interface) and `ipredbagg`(non-formula interace)
+```{r}
+library(ipred)
+#baggedTree <- ipredbagg(solTrainY, solTrainXtrans, control = ...)
+#baggedTree <- bagging(y ~., data = trainData, control = ...)
+```
+Can pass `rpart.control` to the `control` argument for `bagging` and `ipredbagging`
+
+`RWeka` package also has a function called `Bagging`
+`caret` has `bag`
+Conditional inference trees can be bagged using `cforest` from `party` if argument `mtry` is set equal to number of predictors
+
+```{r}
+library(party)
+#bagCtrl <- cforest_control(mtry = ncol(trainData) -1)
+#baggedTree <- cforest(y ~., data = trainData, controls = bagCtrl)
+```
+
+
+##8.5 Random Forests
+Often when using Bagged trees, a common predictor and common split value will occur between them, which would reduce bagging's ability to reduce variance.
+  
+To deal with this, random forests were introduced that took a random number of predictors when making a split.
+
+1. When a tree is created under the random forest model, at each node, a random subset of predictors is considered creating the split, typicall without replacement (cannot be used later)
+2. often recommended to be a third of the total number of predictors
+
+### Importance Rank of Predictors in Random Forest
+|   Due to the averaging occuring in a Random Forest, one cannot interpret the importance of certain variables. Below are methods to deal with this:
+1. Radnomly permute values of each predictor for the out-of-bag sample of one predictor at a time for each tree. The difference in predictive performance between the non-permuted sample and the permuted sample for each predictor is recorded and aggregated across the forst
+2. Measure improvement in node purity based on the performance metric for each predictor at each occurrence of that predictor across the forest. Theseindividual improvement values for each predicotr are then aggregated across the forest to determine overall importance
+
+### Computing
+```{r randomForest}
+library(randomForest)
+#rfModel <- randomForest(solTrainXtrans,solTrainY)
+#rfModel <- randomForest(y ~., data = trainData, mtry =..,ntrees = ..)
+
+#rfModel <- randomForest(solTrainXtrans,solTrainY,
+#                         importance = TRUE,
+#                         ntrees = 1000)
+```
+`mtry` - number of predictors randomly sampled
+`ntrees` - for number of bootstrap samples
+              *Default is 500, but 1000 bootstrap                       samples should be used
+`importance` - calculates variable importance
+`importance()` - use on randomForest object to obtain importance of predictors
+
+`train()` containes wrappers for tuning both randomForest or conditional inference forests with `method = "rf"` or `method = "cforest"`
+
+`varimp()` - pulls predictor importance in the `cforest` package
+
+`caret` has `varImp()` that is a wrapper for variable importance function and can handle pretty much all of the different versions
+
+
+## 8.6 Boosting
+Boosting is the concept of grouping weak learners together into a more superior indicator of a variable.
+
+Trees can easily be contrained in depth to create weak learners. If they can only have 1 - 3 splits or less on a deep dataset, they can always perform rather poorly. They can also be easily joined by gathering the predictions from multiple trees.
+
+Basic Principles of "gradient boosting macines": given a loss function( ie. squared error for regression) and a weak learner (ie. regression trees), the algorith seeks to find an additive model that minimizes the loss function. The algorithm is usually initialized with the mean of the response (for regression). The residual is calculated and a model is fit to the residuals to minimize the loss function. The current model is then added to the previous model and this process continues for a user-specified number of times.
+
+Friedman added a learning rate to handle over-fitting since the tree's built would always choose the best learner. This learning rate is usually < .01. This learning rate would be multiplied to the current model's prediction, before moving to the creating the next model to generate its prediction for them to then be combined.
+
+Friedman also added a bagging technique that randomly sampled a fraction of the training data before each iteration.
+
+My understanding of the process:
+1. Constrain your tree to a certain level
+2. Sample a fraction of the data
+3. Create a fit and a prediction
+4. Multiply your prediction by the learning rate
+5. Add to previous model
+6. Repeat
+
+Differences between predictor importance in boosting vs random forests should not be disconcerting and should be treated as two different perspectives of the data that hold some explanation of the relationship being depicted.
+
+
+```{r}
+library(gbm)
+#gbmModel <- gbm.fit(solTrainXtrans, solTrainY, distribution = "gaussian")
+gbmModel <- gbm(y~., data = trainData, distribution = "gaussian")
+
+#summary.gbm(gbmModel)
+```
+`distribution`- argument that defines type of loss function that will be optimized, continuous responses should be set to "gaussian"
+
+More options below:
+```{r}
+# gbmGrid <- expand.grid(.interaction.depth = seq(1,7, by = 2),
+#                        .n.trees = seq(100,1000,by = 50),
+#                        .shrinkage = c(.01,.1))
+
+# gbmTune <- train(solTrainXtrans, solTrainY,
+#                  method = "gbm",
+#                  tuneGrid = gbmGrid,
+#                 verbose = FALSE #we add this since the gbm function creates so much output)
+```
+
+
+
+## 8.7 Cubist
+A rule based method with an amalgamation of other methods
+
+Differences:
+1. use different techniques for linear model smoothing, creating rules, and pruning
+2. contains an optional boosting-like procedure called *committees*
+3. Predictions generated by the model rules can be adjusted using nearby points from the training set data
+
+Cubist combines models like the earlier rule based models with a linear combination.. Cubist version is:
+$$\hat{y_{par}} = a * \hat{y_k} + (1-a) * \hat{(y_p)}$$
+where $\hat{y_k}$ is the prediction from the current model and $\hat{y_p}$ is from a parent model above it in the tree.
+
+|   Cubist calculates the mixing proportions using a different equation. They compare the covariance between the residuals of the two models. If the variance of the parent model is larger than the covariance between the parent and child model, the smoothing procedures will weigh the child more than the parent.
+|   Ultimately, the model with the smallest RSME has a higher weight in the smoothing.
+
+|   Cubist uses the final model tree to construct the intial set of rules. Cubist then collects sequences of linear models at each node into a single smoothed representation of the models so that there is one linear model associated with each rule.
+|   Adjusted Error Rate is tested across splits and nodes, if the deletion of a condition does not increase the AER, it is pruned. Once the rules have been finalized a new sample is predicted using the average of the linear models from the appropriate rules (vs the rule with the largest coverage)
+|   Model committees are created by generating a sequence of rule-based models. The training set outcome for each is adjusted based on the prior model fit and then builds a new set of rules. If a data point is underpredicted, the sample value is increased in the hope the model will produce a larger prediction. Over-predicted points are also adjusted to lower its predictions in the next model. Once the full set of committee models are created, new samples are predicted useing each model and the final rule-based prediction is the simple average of the individual model predictions.
+|   After the final rule based model is created, when predicting a new sample, the K most similar neighbors are determined and uses the below formula for the final prediction:
+$$\frac{1}{K} \sum_{l=1}^{K}{w_l[t_l + (\hat{y} - \hat{t_l})]}$$
+
+### Computing
+Below creates a rule based model with single committe and no instance based adjustment
+```{r Cubist}
+library(Cubist)
+#cubistMod <- cubist(solTrainXtrans, solTrainY)
+```
+`committess` argument fits multiple models
+`predict()` used for new samples
+```{r}
+#predict(cubistMod, solTestXtrans, neighbors =..)
+```
+
+`neighbors` argument takes value from 0 to 9 to adjust rule based predictions from training set
+
+Once the model is trained the `summary` function generates the exact rules and the final smoothed linear model for each rule.
+
+`train` from `caret` can tune model over values of `committees` and `neighbors`
+```{r}
+#cubistTuned <- train(solTrainXtrans, solTrainY, method = "cubist")
+```
+

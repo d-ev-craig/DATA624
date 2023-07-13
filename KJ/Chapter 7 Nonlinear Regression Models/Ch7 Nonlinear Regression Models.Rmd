@@ -1,0 +1,338 @@
+---
+title: "Ch7 Notes Nonlinear Regression Models"
+author: "Daniel Craig"
+date: "2023-06-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(AppliedPredictiveModeling)
+```
+
+# Non Linear Regression Models (pg 143 - 168)
+
+## Neural Networks
+
+A model where the outcome is modeled by intermediary set of unobserved variables ( hidden variables/hidden units) that are linear combinations of the original predictors, but are not estimated in hierarchical fashion like PLS models. Each hidden unit is a linear combination of some or all of the predictor variables.
+
+The linear combination is usually transformed by a nonlinear function such as the logistic function:
+
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\KJ\\Chapter 7 Nonlinear Regression Models\\figs\\7.1 Neurla Net Log Fun Transformation.png")
+```
+The structure of a neural looks like below. Note that the Hidden units have a sigmoidal relationship with the predictors (as a result of the logistic transformation we performed and mentioned above) and the Hidden Units have a linear relationship with the Outcome.
+
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\KJ\\Chapter 7 Nonlinear Regression Models\\figs\\7.1 Neural Net Structure.png")
+```
+Note that the $\beta$ coefficients are similar to regression coefficients and are read as $\beta_jk$ is the effect of the $j$th predictor on the $k$th predictor. These coefficients' values do not represent coherent information and can't be extrapolated from most of the time.
+
+Once the number of hidden units is defined, each unit must be related to the outcome using the following linear combination:
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\KJ\\Chapter 7 Nonlinear Regression Models\\figs\\7.1 Neural Net Hidden Unit to Outcome Linear Combination.png")
+```
+
+
+Total number of parameters being estimated = $H(P + 1) + H + 1$
+
+For the solubility data, recall that there are 228 predictors. A neural net with three hidden units would estimate 691 parameters while a five hidden unit model would have 1,151.
+
+These estimated parameters are optimized to minimize the sum of the squared residuals. To optimize them, the back-propagation algorithm is typically used.
+
+Downsides:
+- A solution to the equation using the back-propagation algorithm is not a global solution, we can't guarantee that the resulting set of parameters are the best
+- Tend to over-fit the relationship between predictors and response due to the large number of regression coefficients (they've tried *early stopping* which ends the optimization when an estiamte of the error rate starts to increase, but this has issues how can we tell when the rate actually goes up?)
+- Susceptible to highly correlated predictors, it is good to remove them or use Principal Components Analysis, which results in less model terms needing to be optimized
+
+How to handle over-fitting:
+- *Weight decay*: a penalization method to regularize the model to ridge regression(idk what that is) that adds a penalty for large regression coefficients to ensure that any large values must have a significant effect on the model to be tolerated. Optimization produced would try to minimize an alternative version of the sum of squared errors:
+```{r 7.1 NN Overfit Optim}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\KJ\\Chapter 7 Nonlinear Regression Models\\figs\\7.1 NN Overfitting Optimization.png")
+```
+for a given vale of $\lambda$. 
+
+Above function does the following: as regularization value increases, the fitted model becomes more smooth and less likely to over-fit. $\lambda$ normally takes values between 0 and .1. Since regression coefficients are being summed, they should beon the same scale and the predictors should be centered and sacled.
+
+Other methods:
+- Bayesian approach: incorporates regularization and automatic feature selection, computationally heavy
+- Self-Organizing Maps: good for unsupervised exploratory technique or in a supervised fashion for prediction
+
+Challenge of estimating large number of parameters led to attempting to create parameters optimized to local areas of the network, but this didn't guarantee globalyl optimal values. To deal with this, many models with different initial values have been created, like Random Forests, to average across models and have a positive effect.
+
+### 7.3 Neural Net Computing
+Potential libraries:
+-nnet (our focus here)
+-neural
+-RSNNS (supports wide array of neural nets and tut by Bergmeir and Benitez 2012)
+
+- Below would create a single model with 5 hidden units, this assumes predictors have been standardized to same scale
+```{r}
+library(nnet)
+# nnetFit <- nnet(predictors, outcome,  
+#                 + size = 5,  + decay = 0.01, 
+#                  + linout = TRUE,  
+#                   + trace = FALSE,  ##Reduce the amount of printed output  
+#                   + maxit = 500, ##Expand the number of iterations to find parameter estimates..
+#                   + MaxNWts = 5 * (ncol(predictors) + 1) + 5 + 1)  ##and the number of parameters used by the model 
+```
+
+- Below would average across models
+```{r}
+library(nnet)
+# nnetAvg <- avNNet(predictors, outcome,  + size = 5,  + decay = 0.01,  
+#                      + repeats = 5, ##Specify how many models to average
+#                    + linout = TRUE,  
+#                    + trace = FALSE,  ##Reduce the amount of printed output
+#                    + maxit = 500,  ##Expand the number of iterations to find parameter estimates..  
+#                      + MaxNWts = 5 * (ncol(predictors) + 1) + 5 + 1)  ##and the number of parameters used by the model
+```
+
+- New samples are processed using  
+```{r}
+#predict(nnetFit, newData)  
+##or
+#predict(nnetAvg, newData)
+```
+
+- using `train()` from `caret`
+- the nnet train call at the end takes a long time so I've commented it out
+```{r}
+library(caret)
+data(solubility)
+ls(pattern = "^solT")
+ctrl <- trainControl(method = "cv", number = 10)
+
+##The findCorrelation takes a correlation matrix and determines the 
+##column numbers that should be removed to keep all pair-wise correlations below a threshold
+tooHigh <- findCorrelation(cor(solTrainXtrans), cutoff = .75)
+trainXnnet <- solTrainXtrans[, -tooHigh]
+testXnnet <- solTestXtrans[, -tooHigh]
+
+##Create a specific candidate set of models to evaluate:
+nnetGrid <- expand.grid(  .decay = c(0, 0.01, .1), 
+                          .size = c(1:10),  
+                          .bag = FALSE) #option is to use bagging instead of different random seeds.  
+set.seed(100) 
+#nnetTune <- train(solTrainXtrans, solTrainY,  method = "avNNet",  tuneGrid = nnetGrid,  trControl = ctrl,
+                  #preProc = c("center", "scale"), #Automatically standardize data prior to modeling and prediction  
+                  #linout = TRUE, trace = FALSE, 
+                  #MaxNWts = 10 * (ncol(trainXnnet) + 1) + 10 + 1, maxit = 500)  
+```
+
+
+
+## 7.2 Multivariate Adaptive Regression Splines
+
+MARS uses surrogate features instead of original predictors like neural nets and partial least squares. Unlike those two however, MARS group a predictor's value ino two groups, create a linear relationship to the outcome for both groups. One group has all values equal to or less than the cut point set to zero, and values greater than the cut point are left unchanged. The other group is the opposite. This creates a piecewise linear model where each new feature models an isolated portion of the original data. "Left-hand" features refer to the values less than the cutpoint, and "right-hand" is the opposite. Written as lefthand: $h(a-x)$ and righthand: $h(x-a)$
+
+$$-5 + 2.1 * h(MolWeight - 5.94) + 3 * h(5.94 - MolWeight)$$
+-5 is the intercept, followed by the right hand feature, a +3, and then the left hand feature
+
+Cut Points: determined by creating a linear regression model and calculating model error. Whichever predictor/cut point combination that achieves smallest error is then used. This establishes the initial model with the first two features (the two linear relationships created from the cut point identified). The model then conducts another exhaustive search to find the next set of features that when given the initial set, yield the best model. Process repeats until stopping point is reach (can be set by user).
+
+A graphical example of the points, predictor, and resulting piece-wise linear model:
+
+```{r 7.2 MARS Example}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\KJ\\Chapter 7 Nonlinear Regression Models\\figs\\7.2 MARS Example.png")
+```
+Pruning:
+Once all features are created, the algorith sequentially removes each that do not contribute significantly by estimating how much error rate was decreased with its inclusion using the GCV statistic that approzimates leave-one-out cross-validation. Pruning does not proceed backwards along the path and some features deemd important at the beginning may be removed and later features kept.
+
+Second Degree MARS: Previously descrived was the additive MARS model where each surrogate feature involves a single predictor. 2nd Degree MARS models, the algorithm wold conduct the same search of a single term, and after creating the intial pair of features (A and B), would start another search to create new cuts(C and D) to multiply with A that would increase the model's accuracy. Creating terms for A, A x B, A x C. Then this would repeat for B.
+
+Tuning: 
+- degree of features that are added to the model
+- number of retained terms (can be determined by GCV or set by user)
+
+GCV is prone to selection Bias
+
+Advantages:
+- MARS performs feature selection
+- Model equation is independent of any predictors not involved with the final model features( this thins the predictor set)
+- Additive MARS models allow predictors to be isolated and have clear interpretations ofhow the predictor relates to the outcome
+- Higher order MARS retains the potential interpretability as additive models
+- Does not need data prep, near zero variance predictors or correlated predictors do not get chosen or for correlated predictors get chosen at random
+- Can track predictor importance by tracking reduction in the RMSE( measured by GCV statistic) that occurs when adding the feature to the model
+
+### 7.2 MARS Computing
+
+Multivariate Adaptive Regression Splines  MARS models are in several packages, but the most extensive implementation  is in the `earth` package.
+
+- MARS Model using nominal forward pass and pruning step
+  *h(MolWeight - 5.7) line represents the hinge function where the term is equal to zero if the output is less than 5.7
+```{r}
+marsFit <- earth(solTrainXTrans, solTrainY)
+marsFit
+summary(marsFit)
+#knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\KJ\\Chapter 7 Nonlinear Regression Models\\figs\\7.2 MARS Fit Output.png")
+```
+
+-`plotmo` from `earth` will create graphs of each predictors relationship with the outcome like below
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\KJ\\Chapter 7 Nonlinear Regression Models\\figs\\7.2 MARS Individual Predictor Relationships.png")
+```
+- Tuning using resampling reproduces the results in Fig. 7.4
+```{r}
+ #Define the candidate models to test with options from earth package
+marsGrid <- expand.grid(.degree = 1:2, .nprune = 2:38)
+set.seed(100)   #Fix the seed so that the results can be reproduced
+marsTuned <- train(solTrainXtrans, solTrainY,  
+                   + method = "earth",  
+                   + tuneGrid = marsGrid,  #Explicitly declare the candidate models to test  
+                   + trControl = trainControl(method = "cv")
+                   ) 
+marsTuned
+varImp(marsTuned) #calls variable importance
+```
+
+
+7.3 Support Vector Machines (pg 151)
+
+SVMs:
+- started in classification, now used as *robust regression* where we seek to minimize effect of outliers
+- several flavors, we focus on $\epsilon$-insensitive regression.
+- $\epsilon$ is set by user, residuals within the threshold do not contribute to regression fit, while residuals outside it contribute a linear-scale amount
+- need to center and scale data since predictors enter as a sum of corss products
+- Bayesian counterpart is the *relevance vector machine* (Tipping '01) where $\alpha$ parameters have prior distributions and selection of *relevant vectors* is determined using their posterior distribution, if the posterior distribution is highly concentrated around zero, sample is not used in prediction equation
+
+Intuition of Model:
+- Since we are using this threshold, large outliers have a limited effect on the regression equation and samples that the model fits well have *no* effect. If the threshold is set high, only outliers will have impact on the regression line which is counter-intuitive, but has shown to be effective
+
+SVM regression coefficients minimize below function, where $L_\epsilon$ is the $\epsilon$-insensitive function and Cost is set by the user to penalize large residuals.
+
+$$Cost \; \sum_{i=1}^{n}{L_\epsilon (y_i - \hat{y_i})} + \sum_{j=1}^{P}{\beta_j^2}$$
+
+### Linear Support Vector Machine Prediction Function: 
+- Similar to simple linear regression, which is just the sum of combinations of data points and parameters, the SVM linear prediction function is a function of unknown parameters and the training data points.
+- there are as many $\alpha$ parameters as data points,  typically considered over parameterized but the cost functino alleviates this
+- individual points are needed, but will only use the points that are without the $\epsilon$ threshold, thus called support vectors since these points make up the vector that supports the regression line
+$$\beta_0 + \sum_{i=1}^{n}{\alpha_i(\sum_{j=1}^{P}{x_{ij} u_j})}$$
+- Note that in the above equation, the samples enter into the prediction function as a sum of cross products. I assume this note is referring to the nested sum with x_ij and u_j
+- This allows a more general writing of the function, where K is the *kernel function*
+$$f(u) = \beta_0 + \sum_{i=1}^{n}{\alpha_i K(x_i,u)}$$
+- When predictors enter the model linearly, the kernel function reduces to a simple sum of cross products:
+$$K(x_i,u) = \sum_{j=1}^{P}{x_{ij}u_{j}} = x_i'u$$
+- there are nonlinear kernal functions to accomodate nonlinear relationships as well, some are below with a sin graph(3rd graph, red line) to depict this
+- first graph shows the robustness of SVMs to outliers as it fits the regression better than Least Squares
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\KJ\\Chapter 7 Nonlinear Regression Models\\figs\\7.3 Nonlinear Kernal Functions.png")
+```
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\KJ\\Chapter 7 Nonlinear Regression Models\\figs\\7.3 SVM Graph Examples.png")
+```
+
+
+
+### Huber Function Side Notes
+1. The SVM $\epsilon$-insnsitive regression technique and its Linear Support Vector Machine Prediction Function is very similar to the Huber function
+2.Huber function uses squared residuals when small, and uses absolute residuals when their large.
+
+Comparison of model residual contributions to regression lines for several techniques:
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\KJ\\Chapter 7 Nonlinear Regression Models\\figs\\7.3 Residual Contribution to Regression.png")
+```
+- Huber threshold was set to 2, you can see once values hit 2 the line becomes dotted referring to the fact that they would then use the absolute residual
+- SVM used $\epsilon$ = 1 (x axis), and we can see how it changes to dotted, referring to the fact it would only use obs. past 1
+
+## Choosing Kernel Functions & Tuning
+```{r}
+knitr::include_graphics("C:\\Users\\dcrai\\source\\repos\\DATA624\\KJ\\Chapter 7 Nonlinear Regression Models\\figs\\7.3 Nonlinear Kernal Functions.png")
+```
+- If truly linear, than linear(not shown in above picture, this refers to the function $$K(x_i,u) = \sum_{j=1}^{P}{x_{ij}u_{j}} = x_i'u$$)
+- Radial basis function is usually pretty effective otherwise
+
+Tuning:
+- Polynomial: degree must be specified
+- Radial Basis: parameter $\sigma$ controls scale
+    *can be estimated(via Caputo et al. '02),  by taking training set points, calculating distribution of $||x - x'||^2$, and use the 10th and 90th percentile midpoint
+- Cost Value must always be specified
+    *Cost is large, model becomes flexible since effect of errors is amplified
+    *Cost is small, model stiffens and become less likely to over-fit(more likely to under fit) since squared parameters is proportionally large
+    *Typically hold $\epsilon$ static and tune over cost and kernel parameters, since they provide more flexibility and $\epsilon$ is related to cost parameter
+    
+### 7.3 SVM Computing
+
+- radial basis is the default kernel
+- since y is numeric, it knows to fit regression
+- uses the 'analytical' approach to estimating $\sigma$
+- to use polynomial : `kernel = "polydot"`
+- to use linear: `kernel = "vanilladot"`
+
+If values for kernel parameters and cost function are known, you can call like below:
+```{r}
+library(kernlab)
+svmFit <- ksvm(x = solTrainXtrans, y = solTrainY,
+               kernel ="rbfdot", kpar = "automatic",
+               C = 1, epsilon = 0.1)  
+
+```
+
+If vales are not known, you can call like so with train():
+- radial: `method = "svmRadial"`
+- linear: `method = "svmLinear"`
+- polynomial: `method = "svmPoly"`
+- tuneLength: will use default grid of 14 cost values between $2^{-2}$ to $2^{11}$
+- $\sigma$ estimated analtyically by default
+```{r}
+svmRTuned <- train(solTrainXtrans, solTrainY,
+                   method = "svmRadial",
+                   preProc = c("center", "scale"),
+                   tuneLength = 14,
+                   trControl = trainControl(method = "cv")
+                   ) 
+svmRTuned
+svmRTuned$finalModel
+```
+
+For RVM, kernlab also has functions for this and a very similar setup.
+
+
+
+## 7.4 K- Nearest Neighbors
+
+KNN normally uses Euclidean distance to determine neighbors, there are several other methods used:
+
+- Euclidean $(\sum_{j=1}^{P}({x_{aj} - x_{bj})^2)}^{1/2}$
+- Minkowski (generalized Euclidean when q =2) $(\sum_{j=1}^{P}{(|x_{aj}-x_{bj}|)^q})^{1/q}$
+- Manhattan (when Minkowski q = 1)
+- Tanimoto for chemistry
+- Hamming
+- Cosine
+
+Intuition:
+- When predictors are on vastly different scales, distances generated will weigh towards predictors with the larger scale, thus data should be centered and scaled
+- Remove irrelevant/noisy predictors
+- Options to handle missing data:
+    1. excluded (least desirable)
+    2.impute using mean of predictor or nearest neighbor approach
+    
+Tuning:
+  - K usually determined by resampling, ie. values of K ranigng between 1 and 20 were evaluated and choose the lowest RMSE
+  
+Issues:
+  - computation increases with $n$ since distances must be computed
+    *Can mititgate by replacing original data with data that describes the location of the original data, ie. k-dimensional tree
+    *k-d tree orthogonally partitions the predictor space using a tree approach but with different rules
+    * Distances are only computed for training observations in the tree that are close to the new sample
+    * Can also weigh contribution of neighbors based on their distance to the new sample
+    
+    
+### 7.4 KNN Computing
+
+train will tune the model over k
+`knnreg` is the primary function used and exists from caret, not called below since we use train
+```{r}
+library(caret)
+#Remove a few sparse and unbalanced fingerprints first
+knnDescr <- solTrainXtrans[, -nearZeroVar(solTrainXtrans)]
+set.seed(100)
+knnTune <- train(knnDescr,  + solTrainY,  + method = "knn",
+                 preProc = c("center", "scale"), #Center and scaling will occur for new predictions too 
+                 tuneGrid = data.frame(.k = 1:20),
+                 trControl = trainControl(method = "cv")
+)
+
+
+```
+
