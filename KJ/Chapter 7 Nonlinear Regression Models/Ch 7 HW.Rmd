@@ -152,7 +152,7 @@ nnetTune <- train(trainingData[,-11], trainingData[,11],
 
 
 
-nnPreds <- predict(nnetTune, newData = testData[,-11])
+nnPreds <- predict(nnetTune, newdata = testData[,-11])
 
 postResample(pred = nnPreds, obs = testData[,11])
 ```
