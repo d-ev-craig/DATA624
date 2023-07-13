@@ -721,10 +721,13 @@ voltron <- rbind(accTestFull,accTestFull2,accTestFull3)
 
 # Predictions
 ```{r}
+#Import data to predict on
 rawPredict <- read_csv("C:\\Users\\dcrai\\source\\repos\\DATA624\\Project 2\\Materials\\StudentEvaluation- TO PREDICT.csv")
 
+#Rename columns for ease of use
 colnames(rawPredict)[1:33] <- c("brandCode","carbVol","fillOz","pcVol","carbPressure","carbTemp","PSC","pscFill","pscCO2","mnfFlow","carbPressure1","fillPressure","hydPressure1","hydPressure2","hydPressure3","hydPressure4","fillerLvl","fillerSpeed","temp","usageCont","carbFlow","density","MFR","balling","pressureVacuum","PH","oxyFiller","bowlSetpoint","pressureSetpoint","airPressurer","alchRel","carbRel","ballingLvl")
 
+#Factorize our categorical variable
 rawPredict$brandCode <- as_factor(rawPredict$brandCode)
 ```
 
