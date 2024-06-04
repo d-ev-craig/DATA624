@@ -5,8 +5,9 @@ This course covered basic forecasting and prediction techniques including Auto-R
 The course focuses on two projects in a group setting with a heavy focus on "executive summary" type reports.
 
 # Project 1: Forecast on 12 unidentified timeseries using ARIMA and ETS modeling
+There were 6 categories of variable, S01 - S06 with two variables in each.
 
-## Forecast Results
+## Forecast Results (comments from instructor)
 a.	S01 MAPE 11.7% and 27.8% (very good)
 
 b.	S02 MAPE 10.0% and 36.2% (middle Var02, best var03)
@@ -25,7 +26,7 @@ g.	Report Grade – 94, Accuracy 97, overall is 94.9.
 
 # Project 2: Predict pH values of a beverage dataset (2751 x 33)
 
-## Forecast Results
+## Forecast Results (comments from instructor)
 Good model selection and comparison that produced great results.  
 MAPE Accuracy was 0.82 from your group, the best submitted was 0.79.
 
