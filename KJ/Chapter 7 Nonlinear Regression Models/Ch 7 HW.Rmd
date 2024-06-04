@@ -124,6 +124,7 @@ knnModel <- train( trainingData[,-11], trainingData[,11],
 
 knnPred <- predict(knnModel, newdata = testData[,-11])
 
+knnModel$finalModel
 #postResample gets test set performance values
 postResample(pred = knnPred, obs = testData[,11])
 ```

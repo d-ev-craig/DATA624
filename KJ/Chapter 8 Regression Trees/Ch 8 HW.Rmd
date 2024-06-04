@@ -400,8 +400,6 @@ data.frame(rbind(
 #   metrics(tune3), metrics(tune4), metrics(tune5),
 #   metrics(tune6), metrics(tune7), metrics(tune8), metrics(tune9)),
 #   row.names = c("PLS","KNN","CART","CIT","M5","BAG","RF","SGB","CUBE"))
-
-
 ```
 
 a. Which tree-based regression model gives the optimal resampling and test set performance?
