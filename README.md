@@ -8,11 +8,17 @@ The course focuses on two projects in a group setting with a heavy focus on "exe
 
 ## Forecast Results
 a.	S01 MAPE 11.7% and 27.8% (very good)
+
 b.	S02 MAPE 10.0% and 36.2% (middle Var02, best var03)
+
 c.	S03 MAPE 7.5% and 8.6% (best var05 and var07)
+
 d.	S04 MAPE 11.0% and 43.7% (very good)
+
 e.	S05  MAPE 5.8% and 29.0% (worst var02, tied var03)
+
 f.	S06 MAPE 5.5% and 5.7% (very good)
+
 g.	Report Grade – 94, Accuracy 97, overall is 94.9.   
 
 ![P1_Gif](Project_1/P1_Report.gif)
