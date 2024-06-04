@@ -23,7 +23,7 @@ f.	S06 MAPE 5.5% and 5.7% (very good)
 g.	Report Grade – 94, Accuracy 97, overall is 94.9.   
 
 ![P1_Gif](Project_1/P1_Report.gif)
-[P1_PDF](Project_1/P1_Report.pdf)
+![P1_PDF](Project_1/P1_Report.pdf)
 
 # Project 2: Predict pH values of a beverage dataset (2751 x 33)
 
@@ -38,4 +38,4 @@ MAPE Grade 98 (20% of grade)
 Final Grade – 96.4 !! 
 
 ![P2_Gif](Project_2/Project_2_feedback.gif)
-[P2_PDF](Project_2/Project_2_feedback.pdf)
+![P2_PDF](Project_2/Project_2_feedback.pdf)
